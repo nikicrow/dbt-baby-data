@@ -1,0 +1,10 @@
+[project]
+name = "dbt-baby-data"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "dbt-core>=1.11.6",
+    "dbt-postgres>=1.10.0",
+]
