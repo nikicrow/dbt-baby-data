@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: raw_health_events
+    description: ""
+    columns:
+      - name: id
+        data_type: uuid
+        description: ""
+      - name: baby_id
+        data_type: uuid
+        description: ""
+      - name: event_date
+        data_type: timestamp without time zone
+        description: ""
+      - name: event_type
+        data_type: user-defined
+        description: ""
+      - name: title
+        data_type: character varying
+        description: ""
+      - name: description
+        data_type: text
+        description: ""
+      - name: temperature_celsius
+        data_type: double precision
+        description: ""
+      - name: symptoms
+        data_type: json
+        description: ""
+      - name: treatment
+        data_type: text
+        description: ""
+      - name: healthcare_provider
+        data_type: character varying
+        description: ""
+      - name: follow_up_required
+        data_type: boolean
+        description: ""
+      - name: follow_up_date
+        data_type: timestamp without time zone
+        description: ""
+      - name: attachments
+        data_type: json
+        description: ""
+      - name: notes
+        data_type: text
+        description: ""
+      - name: created_at
+        data_type: timestamp without time zone
+        description: ""
+      - name: updated_at
+        data_type: timestamp without time zone
+        description: ""

@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: raw_sleep_sessions
+    description: ""
+    columns:
+      - name: id
+        data_type: uuid
+        description: ""
+      - name: baby_id
+        data_type: uuid
+        description: ""
+      - name: start_time
+        data_type: timestamp without time zone
+        description: ""
+      - name: end_time
+        data_type: timestamp without time zone
+        description: ""
+      - name: sleep_type
+        data_type: user-defined
+        description: ""
+      - name: location
+        data_type: user-defined
+        description: ""
+      - name: sleep_quality
+        data_type: user-defined
+        description: ""
+      - name: sleep_environment
+        data_type: json
+        description: ""
+      - name: wake_reason
+        data_type: user-defined
+        description: ""
+      - name: notes
+        data_type: text
+        description: ""
+      - name: created_at
+        data_type: timestamp without time zone
+        description: ""
+      - name: updated_at
+        data_type: timestamp without time zone
+        description: ""

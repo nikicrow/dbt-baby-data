@@ -1,0 +1,42 @@
+version: 2
+
+models:
+  - name: raw_diaper_events
+    description: ""
+    columns:
+      - name: id
+        data_type: uuid
+        description: ""
+      - name: baby_id
+        data_type: uuid
+        description: ""
+      - name: timestamp
+        data_type: timestamp without time zone
+        description: ""
+      - name: has_urine
+        data_type: boolean
+        description: ""
+      - name: urine_volume
+        data_type: user-defined
+        description: ""
+      - name: has_stool
+        data_type: boolean
+        description: ""
+      - name: stool_consistency
+        data_type: user-defined
+        description: ""
+      - name: stool_color
+        data_type: user-defined
+        description: ""
+      - name: diaper_type
+        data_type: user-defined
+        description: ""
+      - name: notes
+        data_type: text
+        description: ""
+      - name: created_at
+        data_type: timestamp without time zone
+        description: ""
+      - name: updated_at
+        data_type: timestamp without time zone
+        description: ""

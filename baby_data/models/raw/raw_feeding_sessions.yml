@@ -1,0 +1,54 @@
+version: 2
+
+models:
+  - name: raw_feeding_sessions
+    description: ""
+    columns:
+      - name: id
+        data_type: uuid
+        description: ""
+      - name: baby_id
+        data_type: uuid
+        description: ""
+      - name: start_time
+        data_type: timestamp without time zone
+        description: ""
+      - name: end_time
+        data_type: timestamp without time zone
+        description: ""
+      - name: feeding_type
+        data_type: user-defined
+        description: ""
+      - name: breast_started
+        data_type: user-defined
+        description: ""
+      - name: left_breast_duration
+        data_type: integer
+        description: ""
+      - name: right_breast_duration
+        data_type: integer
+        description: ""
+      - name: volume_offered_ml
+        data_type: integer
+        description: ""
+      - name: volume_consumed_ml
+        data_type: integer
+        description: ""
+      - name: formula_type
+        data_type: character varying
+        description: ""
+      - name: food_items
+        data_type: json
+        description: ""
+      - name: appetite
+        data_type: user-defined
+        description: ""
+      - name: notes
+        data_type: text
+        description: ""
+      - name: created_at
+        data_type: timestamp without time zone
+        description: ""
+      - name: updated_at
+        data_type: timestamp without time zone
+        description: ""

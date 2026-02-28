@@ -1,0 +1,13 @@
+version: 2
+
+sources:
+  - name: baby_app
+    database: baby_data
+    schema: public
+    tables:
+      - name: baby_profiles
+      - name: diaper_events
+      - name: feeding_sessions
+      - name: growth_measurements
+      - name: health_events
+      - name: sleep_sessions
