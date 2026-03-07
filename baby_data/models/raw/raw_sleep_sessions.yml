@@ -18,19 +18,19 @@ models:
         description: ""
       - name: sleep_type
         data_type: user-defined
-        description: ""
+        description: "Enum: NAP, NIGHTTIME"
       - name: location
         data_type: user-defined
-        description: ""
+        description: "Enum: CRIB, BASSINET, PARENT_BED, STROLLER, CAR_SEAT, OTHER"
       - name: sleep_quality
         data_type: user-defined
-        description: ""
+        description: "Enum: RESTLESS, FAIR, GOOD, DEEP"
       - name: sleep_environment
         data_type: json
-        description: ""
+        description: "JSON object with environment details (e.g., temperature, noise level)"
       - name: wake_reason
         data_type: user-defined
-        description: ""
+        description: "Enum: NATURAL, CRYING, FEEDING, DIAPER, NOISE, OTHER"
       - name: notes
         data_type: text
         description: ""

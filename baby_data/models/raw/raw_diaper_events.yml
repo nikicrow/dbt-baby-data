@@ -18,19 +18,19 @@ models:
         description: ""
       - name: urine_volume
         data_type: user-defined
-        description: ""
+        description: "Enum: NONE, LIGHT, MODERATE, HEAVY"
       - name: has_stool
         data_type: boolean
-        description: ""
+        description: "Whether the diaper contained stool"
       - name: stool_consistency
         data_type: user-defined
-        description: ""
+        description: "Enum: LIQUID, SOFT, FORMED, HARD"
       - name: stool_color
         data_type: user-defined
-        description: ""
+        description: "Enum: YELLOW, BROWN, GREEN, RED, BLACK, OTHER"
       - name: diaper_type
         data_type: user-defined
-        description: ""
+        description: "Enum: DISPOSABLE, CLOTH, TRAINING"
       - name: notes
         data_type: text
         description: ""

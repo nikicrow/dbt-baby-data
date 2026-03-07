@@ -15,7 +15,7 @@ models:
         description: ""
       - name: event_type
         data_type: user-defined
-        description: ""
+        description: "Enum: vaccination, illness, medication, milestone, doctor_visit, allergy, other"
       - name: title
         data_type: character varying
         description: ""
