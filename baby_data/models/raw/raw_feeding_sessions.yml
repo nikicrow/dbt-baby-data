@@ -18,10 +18,10 @@ models:
         description: ""
       - name: feeding_type
         data_type: user-defined
-        description: ""
+        description: "Enum: breast, bottle, solid"
       - name: breast_started
         data_type: user-defined
-        description: ""
+        description: "Enum: left, right (which breast started the session)"
       - name: left_breast_duration
         data_type: integer
         description: ""
@@ -42,7 +42,7 @@ models:
         description: ""
       - name: appetite
         data_type: user-defined
-        description: ""
+        description: "Enum: poor, fair, good, excellent"
       - name: notes
         data_type: text
         description: ""

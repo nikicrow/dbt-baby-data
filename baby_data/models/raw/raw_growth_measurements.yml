@@ -24,7 +24,7 @@ models:
         description: ""
       - name: measurement_context
         data_type: user-defined
-        description: ""
+        description: "Enum: home, doctor_visit, hospital, clinic"
       - name: measured_by
         data_type: character varying
         description: ""

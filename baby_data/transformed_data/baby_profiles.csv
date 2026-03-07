@@ -1,0 +1,2 @@
+id,name,date_of_birth,birth_weight,birth_length,birth_head_circumference,gender,timezone,notes,created_at,updated_at,is_active
+0d7f2503-cecb-4251-b96b-0c3f423a804f,Ember,2023-08-18,,,,female,Australia/Sydney,Migrated from seed data,2023-08-18T00:00:00,2026-03-07T22:05:42.924395,true
