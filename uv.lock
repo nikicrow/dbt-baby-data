@@ -184,12 +184,16 @@ source = { virtual = "." }
 dependencies = [
     { name = "dbt-core" },
     { name = "dbt-postgres" },
+    { name = "psycopg2-binary" },
+    { name = "pydantic" },
 ]
 
 [package.metadata]
 requires-dist = [
     { name = "dbt-core", specifier = ">=1.11.6" },
     { name = "dbt-postgres", specifier = ">=1.10.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9" },
+    { name = "pydantic", specifier = ">=2.0" },
 ]
 
 [[package]]

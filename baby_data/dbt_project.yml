@@ -34,3 +34,14 @@ models:
     # Config indicated by + and applies to all files under models/example/
     example:
       +materialized: view
+
+seeds:
+  baby_data:
+    # Columns quoted because the CSVs use mixed-case headers
+    +quote_columns: true
+    # All seed files are raw exports — load as-is without type casting
+    +column_types:
+      Time: varchar
+      Status: varchar
+      Note: varchar
+      Baby: varchar

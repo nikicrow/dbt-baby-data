@@ -5,19 +5,22 @@ Transforms historical baby tracking CSV data from the seeds/ folder
 into the raw layer schema format, outputting to transformed_data/.
 
 Supports multiple babies — auto-processes all entries in BABIES config.
-Run this script directly, or via ingest.py for the full pipeline.
+Adding a new baby: add an entry to the BABIES list at the top of this file
+and drop their CSV exports into baby_data/seeds/ as {Name}_diaper.csv etc.
 
 Usage:
-    python transform_seeds.py
-
-Date format expected in all seed CSVs:
-    DD/MM/YY HH:MM am/pm  (Australian format, e.g. "3/9/23 6:03 pm")
+    python transform_seeds.py                  # all babies
+    python transform_seeds.py --baby Imogen    # single baby
+    python transform_seeds.py --list           # list configured babies
 """
 
+import argparse
 import csv
 import uuid
 from datetime import datetime, timedelta
 from pathlib import Path
+
+from pydantic import BaseModel, computed_field
 
 # ---------------------------------------------------------------------------
 # Paths
@@ -26,43 +29,71 @@ SCRIPT_DIR = Path(__file__).parent
 SEEDS_DIR = SCRIPT_DIR.parent / "seeds"
 OUTPUT_DIR = SCRIPT_DIR.parent / "transformed_data"
 
-# ---------------------------------------------------------------------------
-# Baby configuration registry
-# Add new babies here — everything else is auto-derived.
-# ---------------------------------------------------------------------------
-
 # Fixed project-specific UUID namespace — do not change this after first run
 # or all baby IDs will change and break the database.
 _NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
-BABIES = [
-    {
-        "name": "Ember",
-        "date_of_birth": "2023-08-18",
-        "gender": "female",
-        "timezone": "Australia/Sydney",
-    },
-    {
-        "name": "Imogen",
-        "date_of_birth": "2026-03-14",
-        "gender": "female",
-        "timezone": "Australia/Sydney",
-    },
+
+# ---------------------------------------------------------------------------
+# Baby config
+# ---------------------------------------------------------------------------
+
+class BabyConfig(BaseModel):
+    """Configuration for a single baby. Add new babies here."""
+    name: str
+    date_of_birth: str          # YYYY-MM-DD
+    gender: str                 # 'female' | 'male' | 'other'
+    timezone: str               # IANA timezone, e.g. 'Australia/Sydney'
+    # strptime format for the 'Time' column in this baby's CSV exports.
+    # Ember exports: M/D/YY H:MM AM/PM  →  "%m/%d/%y %I:%M %p"
+    # Imogen exports: D/M/YY h:mm am/pm →  "%d/%m/%y %I:%M %p"
+    datetime_format: str = "%m/%d/%y %I:%M %p"
+    birth_weight: str = ""
+    birth_length: str = ""
+    birth_head_circumference: str = ""
+    notes: str = "Migrated from seed data"
+
+    @computed_field  # type: ignore[misc]
+    @property
+    def baby_id(self) -> str:
+        """Stable, deterministic UUID derived from the baby's name.
+
+        Uses a fixed project namespace so the same name always produces the
+        same UUID — re-running never breaks foreign key relationships.
+        """
+        return str(uuid.uuid5(_NAMESPACE, self.name))
+
+    @property
+    def created_at(self) -> str:
+        return f"{self.date_of_birth}T00:00:00"
+
+
+# ---------------------------------------------------------------------------
+# Baby registry — add new babies here
+# ---------------------------------------------------------------------------
+
+BABIES: list[BabyConfig] = [
+    BabyConfig(
+        name="Ember",
+        date_of_birth="2023-08-18",
+        gender="female",
+        timezone="Australia/Sydney",
+        datetime_format="%d/%m/%y %I:%M %p",  # seeds use Australian day-first format
+    ),
+    BabyConfig(
+        name="Imogen",
+        date_of_birth="2026-03-14",  # inferred: earliest tracked entry is 14/3/26
+        gender="female",
+        timezone="Australia/Sydney",
+        datetime_format="%d/%m/%y %I:%M %p",  # app exports day-first format
+    ),
 ]
-
-
-def get_baby_id(name: str) -> str:
-    """Return a stable, deterministic UUID for a baby based on their name.
-
-    The same name always produces the same UUID, so re-running the pipeline
-    never breaks foreign key relationships in the database.
-    """
-    return str(uuid.uuid5(_NAMESPACE, name))
 
 
 # ---------------------------------------------------------------------------
 # CSV field lists (define once, use for reading and writing)
 # ---------------------------------------------------------------------------
+
 PROFILE_FIELDS = [
     "id", "name", "date_of_birth", "birth_weight", "birth_length",
     "birth_head_circumference", "gender", "timezone", "notes",
@@ -90,13 +121,16 @@ FEEDING_FIELDS = [
 # Helpers
 # ---------------------------------------------------------------------------
 
-def parse_datetime(date_str: str) -> datetime:
-    """Parse Australian date format: '3/9/23 6:03 pm' (DD/MM/YY h:MM am/pm).
+def parse_datetime(date_str: str, fmt: str) -> datetime:
+    """Parse a date string using the given strptime format.
 
-    Calling .upper() normalises 'am'/'pm' → 'AM'/'PM' so %p works reliably
-    across platforms regardless of locale settings.
+    Normalises the string before parsing:
+    - strips surrounding whitespace
+    - replaces narrow no-break space (U+202F) with a regular space
+    - uppercases so 'am'/'pm' → 'AM'/'PM', making %p reliable across locales
     """
-    return datetime.strptime(date_str.strip().upper(), "%d/%m/%y %I:%M %p")
+    normalised = date_str.strip().replace("\u202f", " ").upper()
+    return datetime.strptime(normalised, fmt)
 
 
 def format_timestamp(dt: datetime) -> str:
@@ -111,11 +145,17 @@ def parse_int(value: str) -> str:
     return str(int(value.replace(",", "").strip()))
 
 
+def parse_float(value: str) -> str:
+    """Parse a float value, stripping commas and whitespace. Returns '' if empty."""
+    if not value or not value.strip():
+        return ""
+    return str(float(value.replace(",", "").strip()))
+
+
 def read_csv_if_exists(path: Path) -> list[dict] | None:
     """Read a CSV file and return its rows as a list of dicts.
 
     Returns None (and prints a skip notice) if the file doesn't exist.
-    Returns an empty list if the file exists but has no data rows.
     """
     if not path.exists():
         print(f"    Skipping (not found): {path.name}")
@@ -148,20 +188,19 @@ def infer_sleep_type(start_time: datetime, duration_minutes: int) -> str:
 # Transform functions — each returns a list of row dicts for that baby
 # ---------------------------------------------------------------------------
 
-def transform_diaper_events(baby: dict, baby_id: str) -> list[dict]:
+def transform_diaper_events(baby: BabyConfig, baby_id: str) -> list[dict]:
     """Transform {Name}_diaper.csv → diaper_events rows."""
-    path = SEEDS_DIR / f"{baby['name']}_diaper.csv"
+    path = SEEDS_DIR / f"{baby.name}_diaper.csv"
     raw = read_csv_if_exists(path)
     if not raw:
         return []
 
     rows = []
     for row in raw:
-        ts = parse_datetime(row["Time"])
+        ts = parse_datetime(row["Time"], baby.datetime_format)
         status = row["Status"].strip()
         has_urine = status in ("Wet", "Mixed")
         has_stool = status in ("Dirty", "Mixed")
-
         rows.append({
             "id": str(uuid.uuid4()),
             "baby_id": baby_id,
@@ -181,9 +220,9 @@ def transform_diaper_events(baby: dict, baby_id: str) -> list[dict]:
     return rows
 
 
-def transform_sleep_sessions(baby: dict, baby_id: str) -> list[dict]:
+def transform_sleep_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
     """Transform {Name}_sleep.csv → sleep_sessions rows."""
-    path = SEEDS_DIR / f"{baby['name']}_sleep.csv"
+    path = SEEDS_DIR / f"{baby.name}_sleep.csv"
     raw = read_csv_if_exists(path)
     if not raw:
         return []
@@ -192,9 +231,9 @@ def transform_sleep_sessions(baby: dict, baby_id: str) -> list[dict]:
     for row in raw:
         duration_str = row.get("Duration (min)", "").strip()
         if not duration_str:
-            continue  # Skip rows with no duration
+            continue
 
-        start_time = parse_datetime(row["Time"])
+        start_time = parse_datetime(row["Time"], baby.datetime_format)
         duration_minutes = int(duration_str)
         end_time = start_time + timedelta(minutes=duration_minutes)
 
@@ -217,30 +256,25 @@ def transform_sleep_sessions(baby: dict, baby_id: str) -> list[dict]:
     return rows
 
 
-def transform_feeding_sessions(baby: dict, baby_id: str) -> list[dict]:
+def transform_feeding_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
     """Transform nursing + pump + expressed CSVs → feeding_sessions rows.
 
-    - Nursing  → feeding_type: BREAST
-    - Pump     → feeding_type: BOTTLE  (pumped milk fed to baby)
-    - Expressed→ feeding_type: BOTTLE  (expressed milk fed to baby)
-
-    pump.csv (no Baby column, no name prefix) is treated as Ember's pump data.
+    - Nursing   → feeding_type: BREAST
+    - Pump      → feeding_type: BOTTLE (pumped milk fed to baby)
+    - Expressed → feeding_type: BOTTLE (expressed milk fed to baby)
     """
-    rows = []
+    rows: list[dict] = []
 
     # 1. Nursing sessions
-    nursing_path = SEEDS_DIR / f"{baby['name']}_nursing.csv"
-    nursing_raw = read_csv_if_exists(nursing_path)
+    nursing_raw = read_csv_if_exists(SEEDS_DIR / f"{baby.name}_nursing.csv")
     if nursing_raw:
         for row in nursing_raw:
-            start_time = parse_datetime(row["Time"])
+            start_time = parse_datetime(row["Time"], baby.datetime_format)
             total_str = row.get("Total (min)", "").strip()
             duration_minutes = int(total_str) if total_str else 0
             end_time = start_time + timedelta(minutes=duration_minutes)
-
             start_side = row.get("Start side", "").strip()
             breast_started = start_side.upper() if start_side in ("Left", "Right") else ""
-
             rows.append({
                 "id": str(uuid.uuid4()),
                 "baby_id": baby_id,
@@ -262,25 +296,22 @@ def transform_feeding_sessions(baby: dict, baby_id: str) -> list[dict]:
         print(f"    Nursing sessions:  {len(nursing_raw):>5}")
 
     # 2. Pump sessions
-    # pump.csv (no name prefix, no Baby column) belongs to Ember.
-    # Future babies use {Name}_pump.csv if it exists.
+    # Ember's pump file has no name prefix (legacy); future babies use {Name}_pump.csv.
     pump_path = (
         SEEDS_DIR / "pump.csv"
-        if baby["name"] == "Ember"
-        else SEEDS_DIR / f"{baby['name']}_pump.csv"
+        if baby.name == "Ember"
+        else SEEDS_DIR / f"{baby.name}_pump.csv"
     )
     pump_raw = read_csv_if_exists(pump_path)
     if pump_raw:
         for row in pump_raw:
-            start_time = parse_datetime(row["Time"])
+            start_time = parse_datetime(row["Time"], baby.datetime_format)
             total_str = row.get("Total duration (min)", "").strip()
             duration_minutes = int(total_str) if total_str else 0
             end_time = start_time + timedelta(minutes=duration_minutes)
-
             start_side = row.get("Start side", "").strip()
             breast_started = start_side.upper() if start_side in ("Left", "Right") else ""
             total_amount = parse_int(row.get("Total amount (ml)", ""))
-
             rows.append({
                 "id": str(uuid.uuid4()),
                 "baby_id": baby_id,
@@ -302,18 +333,16 @@ def transform_feeding_sessions(baby: dict, baby_id: str) -> list[dict]:
         print(f"    Pump sessions:     {len(pump_raw):>5}")
 
     # 3. Expressed milk feedings
-    expressed_path = SEEDS_DIR / f"{baby['name']}_expressed.csv"
-    expressed_raw = read_csv_if_exists(expressed_path)
+    expressed_raw = read_csv_if_exists(SEEDS_DIR / f"{baby.name}_expressed.csv")
     if expressed_raw:
         for row in expressed_raw:
-            start_time = parse_datetime(row["Time"])
+            start_time = parse_datetime(row["Time"], baby.datetime_format)
             amount = parse_int(row.get("Amount (ml)", ""))
-
             rows.append({
                 "id": str(uuid.uuid4()),
                 "baby_id": baby_id,
                 "start_time": format_timestamp(start_time),
-                "end_time": format_timestamp(start_time),  # No duration for expressed
+                "end_time": format_timestamp(start_time),
                 "feeding_type": "BOTTLE",
                 "breast_started": "",
                 "left_breast_duration": "",
@@ -337,27 +366,26 @@ def transform_feeding_sessions(baby: dict, baby_id: str) -> list[dict]:
 # Baby profiles
 # ---------------------------------------------------------------------------
 
-def create_baby_profiles() -> list[dict]:
-    """Create a baby_profiles row for every entry in BABIES."""
+def create_baby_profiles(babies: list[BabyConfig]) -> list[dict]:
+    """Create a baby_profiles row for every entry in babies."""
     now = datetime.now().isoformat()
-    rows = []
-    for baby in BABIES:
-        baby_id = get_baby_id(baby["name"])
-        rows.append({
-            "id": baby_id,
-            "name": baby["name"],
-            "date_of_birth": baby["date_of_birth"],
-            "birth_weight": "",
-            "birth_length": "",
-            "birth_head_circumference": "",
-            "gender": baby["gender"],
-            "timezone": baby["timezone"],
-            "notes": "Migrated from seed data",
-            "created_at": f"{baby['date_of_birth']}T00:00:00",
+    return [
+        {
+            "id": baby.baby_id,
+            "name": baby.name,
+            "date_of_birth": baby.date_of_birth,
+            "birth_weight": baby.birth_weight,
+            "birth_length": baby.birth_length,
+            "birth_head_circumference": baby.birth_head_circumference,
+            "gender": baby.gender,
+            "timezone": baby.timezone,
+            "notes": baby.notes,
+            "created_at": baby.created_at,
             "updated_at": now,
             "is_active": "true",
-        })
-    return rows
+        }
+        for baby in babies
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -365,27 +393,55 @@ def create_baby_profiles() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def main() -> None:
+    parser = argparse.ArgumentParser(description="Transform seed CSVs into raw layer format")
+    parser.add_argument(
+        "--baby",
+        metavar="NAME",
+        default=None,
+        help="Process only this baby (case-insensitive). Omit to process all.",
+    )
+    parser.add_argument(
+        "--list",
+        action="store_true",
+        help="List configured babies and exit.",
+    )
+    args = parser.parse_args()
+
+    if args.list:
+        print("Configured babies:")
+        for baby in BABIES:
+            print(f"  {baby.name}  (DOB: {baby.date_of_birth}, id: {baby.baby_id})")
+        return
+
+    if args.baby:
+        babies = [b for b in BABIES if b.name.lower() == args.baby.lower()]
+        if not babies:
+            names = [b.name for b in BABIES]
+            print(f"Error: baby '{args.baby}' not found. Available: {names}")
+            raise SystemExit(1)
+    else:
+        babies = list(BABIES)
+
     print("=" * 60)
     print("Seed Data Transformation")
     print("=" * 60)
-    print(f"Babies:  {', '.join(b['name'] for b in BABIES)}")
+    print(f"Babies:  {', '.join(b.name for b in babies)}")
     print(f"Input:   {SEEDS_DIR}")
     print(f"Output:  {OUTPUT_DIR}")
 
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-    all_diaper: list[dict] = []
-    all_sleep: list[dict] = []
+    all_diaper:  list[dict] = []
+    all_sleep:   list[dict] = []
     all_feeding: list[dict] = []
 
-    for baby in BABIES:
-        baby_id = get_baby_id(baby["name"])
-        print(f"\n  {baby['name']}  (id: {baby_id})")
-        all_diaper  += transform_diaper_events(baby, baby_id)
-        all_sleep   += transform_sleep_sessions(baby, baby_id)
-        all_feeding += transform_feeding_sessions(baby, baby_id)
+    for baby in babies:
+        print(f"\n  {baby.name}  (id: {baby.baby_id})")
+        all_diaper  += transform_diaper_events(baby, baby.baby_id)
+        all_sleep   += transform_sleep_sessions(baby, baby.baby_id)
+        all_feeding += transform_feeding_sessions(baby, baby.baby_id)
 
-    profiles = create_baby_profiles()
+    profiles = create_baby_profiles(babies)
 
     print("\nWriting output files...")
     write_csv(OUTPUT_DIR / "baby_profiles.csv",    PROFILE_FIELDS,  profiles)
