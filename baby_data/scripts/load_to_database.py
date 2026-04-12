@@ -2,30 +2,32 @@
 Database Load Script
 
 Loads transformed CSV data directly into the PostgreSQL database.
-Reads from transformed_data/ and inserts into the baby_app schema.
+Reads from transformed_data/ and inserts into the configured schema.
 
 Usage:
-    # Set environment variables first:
-    export DATABASE_URL="postgresql://user:pass@host:port/dbname"
-    # OR set individual variables:
-    export DB_HOST="localhost"
-    export DB_PORT="5432"
-    export DB_NAME="baby_data"
-    export DB_USER="postgres"
-    export DB_PASSWORD="your_password"
-    export DB_SCHEMA="public"  # Optional, defaults to "public"
-
+    # Local (default):
     python load_to_database.py
-    python load_to_database.py --force  # Clear existing data without prompting
+
+    # Supabase:
+    python load_to_database.py --target supabase
+
+    # Force reload without prompt:
+    python load_to_database.py --force
+    python load_to_database.py --target supabase --force
+
+Environment variables (local target):
+    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSLMODE
+
+Environment variables (supabase target):
+    SUPABASE_DB_HOST, SUPABASE_DB_PORT, SUPABASE_DB_NAME,
+    SUPABASE_DB_USER, SUPABASE_DB_PASSWORD
 """
 
 import argparse
 import csv
-import os
 import sys
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 try:
     import psycopg2
@@ -34,47 +36,55 @@ except ImportError:
     print("Error: psycopg2 not installed. Run: pip install psycopg2-binary")
     sys.exit(1)
 
+try:
+    from pydantic import Field
+    from pydantic_settings import BaseSettings
+except ImportError:
+    print("Error: pydantic-settings not installed. Run: pip install pydantic-settings")
+    sys.exit(1)
+
 # Paths
 SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR.parent / "transformed_data"
+ENV_FILE = SCRIPT_DIR / ".env"
 
 
-def get_connection_params() -> dict:
-    """Get database connection parameters from environment variables."""
-    # Try DATABASE_URL first (common in production/Heroku/Railway)
-    database_url = os.environ.get('DATABASE_URL')
-    if database_url:
-        parsed = urlparse(database_url)
-        return {
-            'host': parsed.hostname,
-            'port': parsed.port or 5432,
-            'database': parsed.path[1:],  # Remove leading /
-            'user': parsed.username,
-            'password': parsed.password,
-        }
+class LocalDatabaseConfig(BaseSettings):
+    host: str = Field(default="localhost", alias="DB_HOST")
+    port: int = Field(default=5432, alias="DB_PORT")
+    dbname: str = Field(default="baby_data", alias="DB_NAME")
+    user: str = Field(default="postgres", alias="DB_USER")
+    password: str = Field(default="", alias="DB_PASSWORD")
+    sslmode: str = Field(default="disable", alias="DB_SSLMODE")
+    schema: str = Field(default="public", alias="DB_SCHEMA")
 
-    # Fall back to individual variables
-    required = ['DB_HOST', 'DB_NAME', 'DB_USER', 'DB_PASSWORD']
-    missing = [var for var in required if not os.environ.get(var)]
-    if missing:
-        print(f"Error: Missing environment variables: {', '.join(missing)}")
-        print("\nSet DATABASE_URL or individual DB_* variables.")
-        print("Example:")
-        print('  export DATABASE_URL="postgresql://user:pass@localhost:5432/dbname"')
-        sys.exit(1)
-
-    return {
-        'host': os.environ['DB_HOST'],
-        'port': int(os.environ.get('DB_PORT', 5432)),
-        'database': os.environ['DB_NAME'],
-        'user': os.environ['DB_USER'],
-        'password': os.environ['DB_PASSWORD'],
-    }
+    model_config = {"env_file": str(ENV_FILE), "populate_by_name": True}
 
 
-def get_schema() -> str:
-    """Get the target schema name."""
-    return os.environ.get('DB_SCHEMA', 'public')
+class SupabaseDatabaseConfig(BaseSettings):
+    host: str = Field(alias="SUPABASE_DB_HOST")
+    port: int = Field(default=5432, alias="SUPABASE_DB_PORT")
+    dbname: str = Field(default="postgres", alias="SUPABASE_DB_NAME")
+    user: str = Field(default="postgres", alias="SUPABASE_DB_USER")
+    password: str = Field(alias="SUPABASE_DB_PASSWORD")
+    sslmode: str = Field(default="require", alias="SUPABASE_DB_SSLMODE")
+    schema: str = Field(default="baby_data", alias="SUPABASE_DB_SCHEMA")
+
+    model_config = {"env_file": str(ENV_FILE), "populate_by_name": True}
+
+
+def get_config(target: str) -> LocalDatabaseConfig | SupabaseDatabaseConfig:
+    if target == "supabase":
+        return SupabaseDatabaseConfig()
+    return LocalDatabaseConfig()
+
+
+def get_connection_string(config: LocalDatabaseConfig | SupabaseDatabaseConfig) -> str:
+    return (
+        f"postgresql://{config.user}:{config.password}"
+        f"@{config.host}:{config.port}/{config.dbname}"
+        f"?sslmode={config.sslmode}"
+    )
 
 
 def read_csv(filename: str) -> tuple[list[str], list[dict]]:
@@ -112,28 +122,24 @@ def convert_value(value: str, column: str) -> Any:
     return value
 
 
-def insert_table(conn, table_name: str, csv_filename: str) -> int:
+def insert_table(conn, table_name: str, csv_filename: str, schema: str) -> int:
     """Insert data from CSV into database table."""
-    schema = get_schema()
     headers, rows = read_csv(csv_filename)
 
     if not rows:
         print(f"  No data to insert for {table_name}")
         return 0
 
-    # Build column list and values
     columns = headers
     values = []
     for row in rows:
         converted_row = tuple(convert_value(row[col], col) for col in columns)
         values.append(converted_row)
 
-    # Build INSERT query
     col_str = ', '.join(f'"{col}"' for col in columns)
     placeholders = ', '.join(['%s'] * len(columns))
     query = f'INSERT INTO {schema}.{table_name} ({col_str}) VALUES %s'
 
-    # Execute batch insert
     with conn.cursor() as cur:
         execute_values(cur, query, values, template=f'({placeholders})')
 
@@ -141,9 +147,8 @@ def insert_table(conn, table_name: str, csv_filename: str) -> int:
     return len(values)
 
 
-def check_table_exists(conn, table_name: str) -> bool:
+def check_table_exists(conn, table_name: str, schema: str) -> bool:
     """Check if a table exists in the database."""
-    schema = get_schema()
     with conn.cursor() as cur:
         cur.execute("""
             SELECT EXISTS (
@@ -154,17 +159,15 @@ def check_table_exists(conn, table_name: str) -> bool:
         return cur.fetchone()[0]
 
 
-def get_table_row_count(conn, table_name: str) -> int:
+def get_table_row_count(conn, table_name: str, schema: str) -> int:
     """Get current row count in table."""
-    schema = get_schema()
     with conn.cursor() as cur:
         cur.execute(f'SELECT COUNT(*) FROM {schema}.{table_name}')
         return cur.fetchone()[0]
 
 
-def clear_table(conn, table_name: str) -> int:
+def clear_table(conn, table_name: str, schema: str) -> int:
     """Clear all rows from table. Returns count of deleted rows."""
-    schema = get_schema()
     with conn.cursor() as cur:
         cur.execute(f'DELETE FROM {schema}.{table_name}')
         count = cur.rowcount
@@ -175,6 +178,8 @@ def clear_table(conn, table_name: str) -> int:
 def main():
     """Load all transformed data into the database."""
     parser = argparse.ArgumentParser(description='Load transformed data into PostgreSQL')
+    parser.add_argument('--target', choices=['local', 'supabase'], default='local',
+                        help='Database target (default: local)')
     parser.add_argument('--force', '-f', action='store_true',
                         help='Clear existing data without prompting')
     args = parser.parse_args()
@@ -182,33 +187,32 @@ def main():
     print("=" * 60)
     print("Database Load Script")
     print("=" * 60)
+    print(f"Target: {args.target}")
     print(f"Data source: {DATA_DIR}")
     print()
 
-    # Check data files exist
     csv_files = list(DATA_DIR.glob("*.csv"))
     if not csv_files:
         print(f"Error: No CSV files found in {DATA_DIR}")
         print("Run transform_seeds.py first to generate the data.")
         sys.exit(1)
 
-    # Connect to database
-    params = get_connection_params()
-    schema = get_schema()
-    print(f"Connecting to: {params['host']}:{params['port']}/{params['database']}")
+    config = get_config(args.target)
+    schema = config.schema
+    conn_str = get_connection_string(config)
+
+    print(f"Connecting to: {config.host}:{config.port}/{config.dbname}")
     print(f"Target schema: {schema}")
     print()
 
     try:
-        conn = psycopg2.connect(**params)
+        conn = psycopg2.connect(conn_str)
         print("Connected successfully!")
         print()
     except psycopg2.Error as e:
         print(f"Connection failed: {e}")
         sys.exit(1)
 
-    # Table mapping: CSV filename -> database table name
-    # Order matters for foreign key constraints (baby_profiles must be first for insert)
     tables = [
         ('baby_profiles.csv', 'baby_profiles'),
         ('diaper_events.csv', 'diaper_events'),
@@ -216,24 +220,22 @@ def main():
         ('feeding_sessions.csv', 'feeding_sessions'),
     ]
 
-    # All tables that reference baby_profiles (for clearing in correct order)
     all_dependent_tables = [
         'health_events',
         'growth_measurements',
         'feeding_sessions',
         'sleep_sessions',
         'diaper_events',
-        'baby_profiles',  # Clear last
+        'baby_profiles',
     ]
 
-    # Check tables exist
     print("Checking tables...")
     for csv_file, table_name in tables:
-        exists = check_table_exists(conn, table_name)
+        exists = check_table_exists(conn, table_name, schema)
         status = "OK" if exists else "MISSING"
         print(f"  {table_name}: {status}")
 
-    missing = [t for _, t in tables if not check_table_exists(conn, t)]
+    missing = [t for _, t in tables if not check_table_exists(conn, t, schema)]
     if missing:
         print(f"\nError: Missing tables: {', '.join(missing)}")
         print("Please ensure the database schema is set up correctly.")
@@ -242,14 +244,13 @@ def main():
 
     print()
 
-    # Check for existing data
     print("Checking for existing data...")
     for csv_file, table_name in tables:
-        count = get_table_row_count(conn, table_name)
+        count = get_table_row_count(conn, table_name, schema)
         if count > 0:
             print(f"  {table_name}: {count} existing rows")
 
-    existing_data = any(get_table_row_count(conn, t) > 0 for _, t in tables)
+    existing_data = any(get_table_row_count(conn, t, schema) > 0 for _, t in tables)
     if existing_data:
         if not args.force:
             print()
@@ -261,20 +262,18 @@ def main():
 
         print()
         print("Clearing existing data...")
-        # Clear all dependent tables in correct order for foreign key constraints
         for table_name in all_dependent_tables:
-            if check_table_exists(conn, table_name):
-                deleted = clear_table(conn, table_name)
+            if check_table_exists(conn, table_name, schema):
+                deleted = clear_table(conn, table_name, schema)
                 if deleted > 0:
                     print(f"  Cleared {deleted} rows from {table_name}")
 
     print()
     print("Loading data...")
 
-    # Insert data
     total = 0
     for csv_file, table_name in tables:
-        count = insert_table(conn, table_name, csv_file)
+        count = insert_table(conn, table_name, csv_file, schema)
         print(f"  {table_name}: {count} rows inserted")
         total += count
 
