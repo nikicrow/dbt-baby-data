@@ -22,6 +22,11 @@ This migration adds Supabase (hosted PostgreSQL) as a second dbt target while ke
 - Added `get_connection_string()` helper that builds a `postgresql://` URL from the config.
 - All other logic (insert, clear, check) is unchanged.
 
+### `baby_data/scripts/ingest.py`
+- Added `--target {local,supabase}` flag that is passed through to `load_to_database.py` during the load step.
+- Default remains `local` so existing invocations (`python ingest.py`) behave identically.
+- Load-step header now prints the active target for clarity.
+
 ### `baby_data/scripts/.env.example`
 - New file documenting all environment variables required for both targets.
 - Copy to `baby_data/scripts/.env` and fill in real values (file is gitignored).
@@ -41,8 +46,9 @@ python baby_data/scripts/load_to_database.py
 
 ### Supabase target
 ```bash
-dbt run --target supabase         # point dbt at Supabase
+dbt run --target supabase                            # point dbt at Supabase
 python baby_data/scripts/load_to_database.py --target supabase
+python baby_data/scripts/ingest.py --target supabase # full pipeline into Supabase
 ```
 
 ---
