@@ -37,7 +37,6 @@ except ImportError:
     sys.exit(1)
 
 try:
-    from pydantic import Field
     from pydantic_settings import BaseSettings
 except ImportError:
     print("Error: pydantic-settings not installed. Run: pip install pydantic-settings")
@@ -49,40 +48,44 @@ DATA_DIR = SCRIPT_DIR.parent / "transformed_data"
 ENV_FILE = SCRIPT_DIR / ".env"
 
 
-class LocalDatabaseConfig(BaseSettings):
-    host: str = Field(default="localhost", alias="DB_HOST")
-    port: int = Field(default=5432, alias="DB_PORT")
-    dbname: str = Field(default="baby_data", alias="DB_NAME")
-    user: str = Field(default="postgres", alias="DB_USER")
-    password: str = Field(default="", alias="DB_PASSWORD")
-    sslmode: str = Field(default="disable", alias="DB_SSLMODE")
-    schema: str = Field(default="public", alias="DB_SCHEMA")
+class DatabaseConfig(BaseSettings):
+    """Shared connection settings; subclasses set the env var prefix and target-specific defaults."""
 
-    model_config = {"env_file": str(ENV_FILE), "populate_by_name": True}
+    host: str = "localhost"
+    port: int = 5432
+    name: str = "baby_data"
+    user: str = "postgres"
+    password: str = ""
+    sslmode: str = "disable"
+    schema: str = "public"
 
-
-class SupabaseDatabaseConfig(BaseSettings):
-    host: str = Field(alias="SUPABASE_DB_HOST")
-    port: int = Field(default=5432, alias="SUPABASE_DB_PORT")
-    dbname: str = Field(default="postgres", alias="SUPABASE_DB_NAME")
-    user: str = Field(default="postgres", alias="SUPABASE_DB_USER")
-    password: str = Field(alias="SUPABASE_DB_PASSWORD")
-    sslmode: str = Field(default="require", alias="SUPABASE_DB_SSLMODE")
-    schema: str = Field(default="baby_data", alias="SUPABASE_DB_SCHEMA")
-
-    model_config = {"env_file": str(ENV_FILE), "populate_by_name": True}
+    model_config = {"env_file": str(ENV_FILE)}
 
 
-def get_config(target: str) -> LocalDatabaseConfig | SupabaseDatabaseConfig:
+class LocalDatabaseConfig(DatabaseConfig):
+    model_config = {"env_prefix": "DB_"}
+
+
+class SupabaseDatabaseConfig(DatabaseConfig):
+    host: str
+    name: str = "postgres"
+    password: str
+    sslmode: str = "require"
+    schema: str = "baby_data"
+
+    model_config = {"env_prefix": "SUPABASE_DB_"}
+
+
+def get_config(target: str) -> DatabaseConfig:
     if target == "supabase":
         return SupabaseDatabaseConfig()
     return LocalDatabaseConfig()
 
 
-def get_connection_string(config: LocalDatabaseConfig | SupabaseDatabaseConfig) -> str:
+def get_connection_string(config: DatabaseConfig) -> str:
     return (
         f"postgresql://{config.user}:{config.password}"
-        f"@{config.host}:{config.port}/{config.dbname}"
+        f"@{config.host}:{config.port}/{config.name}"
         f"?sslmode={config.sslmode}"
     )
 
@@ -201,7 +204,7 @@ def main():
     schema = config.schema
     conn_str = get_connection_string(config)
 
-    print(f"Connecting to: {config.host}:{config.port}/{config.dbname}")
+    print(f"Connecting to: {config.host}:{config.port}/{config.name}")
     print(f"Target schema: {schema}")
     print()
 
