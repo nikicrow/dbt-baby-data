@@ -47,6 +47,11 @@ SCRIPT_DIR = Path(__file__).parent
 DATA_DIR = SCRIPT_DIR.parent / "transformed_data"
 ENV_FILE = SCRIPT_DIR / ".env"
 
+# Rows written by this pipeline carry source='ingested' (set in
+# transform_seeds.py). The loader only ever deletes rows with this tag —
+# rows created through the app (source='app') are never touched.
+PIPELINE_SOURCE = "ingested"
+
 
 class DatabaseConfig(BaseSettings):
     """Shared connection settings; subclasses set the env var prefix and target-specific defaults."""
@@ -125,8 +130,14 @@ def convert_value(value: str, column: str) -> Any:
     return value
 
 
-def insert_table(conn, table_name: str, csv_filename: str, schema: str) -> int:
-    """Insert data from CSV into database table."""
+def insert_table(conn, table_name: str, csv_filename: str, schema: str,
+                 conflict_key: str | None = None) -> int:
+    """Insert data from CSV into database table.
+
+    If conflict_key is given, rows are upserted (ON CONFLICT DO UPDATE)
+    instead of plain-inserted — used for baby_profiles, whose deterministic
+    ids persist across ingests and may be referenced by app-created events.
+    """
     headers, rows = read_csv(csv_filename)
 
     if not rows:
@@ -142,6 +153,10 @@ def insert_table(conn, table_name: str, csv_filename: str, schema: str) -> int:
     col_str = ', '.join(f'"{col}"' for col in columns)
     placeholders = ', '.join(['%s'] * len(columns))
     query = f'INSERT INTO {schema}.{table_name} ({col_str}) VALUES %s'
+    if conflict_key:
+        update_cols = [col for col in columns if col != conflict_key]
+        set_str = ', '.join(f'"{col}" = EXCLUDED."{col}"' for col in update_cols)
+        query += f' ON CONFLICT ("{conflict_key}") DO UPDATE SET {set_str}'
 
     with conn.cursor() as cur:
         execute_values(cur, query, values, template=f'({placeholders})')
@@ -162,17 +177,23 @@ def check_table_exists(conn, table_name: str, schema: str) -> bool:
         return cur.fetchone()[0]
 
 
-def get_table_row_count(conn, table_name: str, schema: str) -> int:
-    """Get current row count in table."""
+def get_ingested_row_count(conn, table_name: str, schema: str) -> int:
+    """Count rows previously loaded by this pipeline (source='ingested')."""
     with conn.cursor() as cur:
-        cur.execute(f'SELECT COUNT(*) FROM {schema}.{table_name}')
+        cur.execute(
+            f'SELECT COUNT(*) FROM {schema}.{table_name} WHERE source = %s',
+            (PIPELINE_SOURCE,),
+        )
         return cur.fetchone()[0]
 
 
-def clear_table(conn, table_name: str, schema: str) -> int:
-    """Clear all rows from table. Returns count of deleted rows."""
+def clear_ingested_rows(conn, table_name: str, schema: str) -> int:
+    """Delete only pipeline-loaded rows. Returns count of deleted rows."""
     with conn.cursor() as cur:
-        cur.execute(f'DELETE FROM {schema}.{table_name}')
+        cur.execute(
+            f'DELETE FROM {schema}.{table_name} WHERE source = %s',
+            (PIPELINE_SOURCE,),
+        )
         count = cur.rowcount
     conn.commit()
     return count
@@ -223,13 +244,14 @@ def main():
         ('feeding_sessions.csv', 'feeding_sessions'),
     ]
 
-    all_dependent_tables = [
-        'health_events',
-        'growth_measurements',
+    # Only pipeline-owned rows (source='ingested') in these tables are ever
+    # deleted. baby_profiles is upserted instead — its rows may be referenced
+    # by app-created events. App-only tables (growth_measurements,
+    # health_events) are never touched.
+    event_tables = [
         'feeding_sessions',
         'sleep_sessions',
         'diaper_events',
-        'baby_profiles',
     ]
 
     print("Checking tables...")
@@ -247,36 +269,36 @@ def main():
 
     print()
 
-    print("Checking for existing data...")
-    for csv_file, table_name in tables:
-        count = get_table_row_count(conn, table_name, schema)
+    print("Checking for previously ingested data...")
+    for table_name in event_tables:
+        count = get_ingested_row_count(conn, table_name, schema)
         if count > 0:
-            print(f"  {table_name}: {count} existing rows")
+            print(f"  {table_name}: {count} ingested rows")
 
-    existing_data = any(get_table_row_count(conn, t, schema) > 0 for _, t in tables)
+    existing_data = any(get_ingested_row_count(conn, t, schema) > 0 for t in event_tables)
     if existing_data:
         if not args.force:
             print()
-            response = input("Tables contain existing data. Clear and reload? [y/N]: ")
+            response = input("Replace previously ingested rows? App-created rows are kept. [y/N]: ")
             if response.lower() != 'y':
                 print("Aborted. No changes made.")
                 conn.close()
                 sys.exit(0)
 
         print()
-        print("Clearing existing data...")
-        for table_name in all_dependent_tables:
-            if check_table_exists(conn, table_name, schema):
-                deleted = clear_table(conn, table_name, schema)
-                if deleted > 0:
-                    print(f"  Cleared {deleted} rows from {table_name}")
+        print("Clearing previously ingested rows...")
+        for table_name in event_tables:
+            deleted = clear_ingested_rows(conn, table_name, schema)
+            if deleted > 0:
+                print(f"  Cleared {deleted} ingested rows from {table_name}")
 
     print()
     print("Loading data...")
 
     total = 0
     for csv_file, table_name in tables:
-        count = insert_table(conn, table_name, csv_file, schema)
+        conflict_key = 'id' if table_name == 'baby_profiles' else None
+        count = insert_table(conn, table_name, csv_file, schema, conflict_key=conflict_key)
         print(f"  {table_name}: {count} rows inserted")
         total += count
 

@@ -33,6 +33,10 @@ OUTPUT_DIR = SCRIPT_DIR.parent / "transformed_data"
 # or all baby IDs will change and break the database.
 _NAMESPACE = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
+# Every row this pipeline produces is tagged so the loader can delete and
+# reload only its own rows, leaving app-created rows (source='app') alone.
+ROW_SOURCE = "ingested"
+
 
 # ---------------------------------------------------------------------------
 # Baby config
@@ -97,23 +101,23 @@ BABIES: list[BabyConfig] = [
 PROFILE_FIELDS = [
     "id", "name", "date_of_birth", "birth_weight", "birth_length",
     "birth_head_circumference", "gender", "timezone", "notes",
-    "created_at", "updated_at", "is_active",
+    "created_at", "updated_at", "is_active", "source",
 ]
 DIAPER_FIELDS = [
     "id", "baby_id", "timestamp", "has_urine", "urine_volume",
     "has_stool", "stool_consistency", "stool_color", "diaper_type",
-    "notes", "created_at", "updated_at",
+    "notes", "created_at", "updated_at", "source",
 ]
 SLEEP_FIELDS = [
     "id", "baby_id", "start_time", "end_time", "sleep_type",
     "location", "sleep_quality", "sleep_environment", "wake_reason",
-    "notes", "created_at", "updated_at",
+    "notes", "created_at", "updated_at", "source",
 ]
 FEEDING_FIELDS = [
     "id", "baby_id", "start_time", "end_time", "feeding_type",
     "breast_started", "left_breast_duration", "right_breast_duration",
     "volume_offered_ml", "volume_consumed_ml", "formula_type",
-    "food_items", "appetite", "notes", "created_at", "updated_at",
+    "food_items", "appetite", "notes", "created_at", "updated_at", "source",
 ]
 
 
@@ -214,6 +218,7 @@ def transform_diaper_events(baby: BabyConfig, baby_id: str) -> list[dict]:
             "notes": row.get("Note", "").strip(),
             "created_at": format_timestamp(ts),
             "updated_at": format_timestamp(ts),
+            "source": ROW_SOURCE,
         })
 
     print(f"    Diaper events:     {len(rows):>5}")
@@ -250,6 +255,7 @@ def transform_sleep_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
             "notes": row.get("Note", "").strip(),
             "created_at": format_timestamp(start_time),
             "updated_at": format_timestamp(start_time),
+            "source": ROW_SOURCE,
         })
 
     print(f"    Sleep sessions:    {len(rows):>5}")
@@ -292,6 +298,7 @@ def transform_feeding_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
                 "notes": row.get("Note", "").strip(),
                 "created_at": format_timestamp(start_time),
                 "updated_at": format_timestamp(start_time),
+                "source": ROW_SOURCE,
             })
         print(f"    Nursing sessions:  {len(nursing_raw):>5}")
 
@@ -329,6 +336,7 @@ def transform_feeding_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
                 "notes": row.get("Note", "").strip(),
                 "created_at": format_timestamp(start_time),
                 "updated_at": format_timestamp(start_time),
+                "source": ROW_SOURCE,
             })
         print(f"    Pump sessions:     {len(pump_raw):>5}")
 
@@ -355,6 +363,7 @@ def transform_feeding_sessions(baby: BabyConfig, baby_id: str) -> list[dict]:
                 "notes": row.get("Note", "").strip(),
                 "created_at": format_timestamp(start_time),
                 "updated_at": format_timestamp(start_time),
+                "source": ROW_SOURCE,
             })
         print(f"    Expressed:         {len(expressed_raw):>5}")
 
@@ -383,6 +392,7 @@ def create_baby_profiles(babies: list[BabyConfig]) -> list[dict]:
             "created_at": baby.created_at,
             "updated_at": now,
             "is_active": "true",
+            "source": ROW_SOURCE,
         }
         for baby in babies
     ]

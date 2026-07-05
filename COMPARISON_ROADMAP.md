@@ -30,10 +30,11 @@ but is deferred to the final phase.
 1. **Imogen's DOB is 2026-03-13.** `BABIES` in `baby_data/scripts/transform_seeds.py` currently
    has `2026-03-14` (inferred from her earliest tracked entry). Must be corrected — a wrong DOB
    shifts every age-aligned chart by a day.
-2. **Ingest wipes app-logged data.** `load_to_database.py` truncates and re-inserts. Anything
-   logged through the frontend's Log Activity form is lost on the next ingest. Treat the CSV
-   export (Huckleberry zip) as the single source of truth until upsert loading exists (out of
-   scope for now).
+2. **App and pipeline rows coexist via the `source` column.** Every table carries
+   `source` (`'app'` for rows logged through the frontend, `'ingested'` for pipeline rows).
+   On each ingest the loader deletes and reloads only `source='ingested'` event rows, upserts
+   `baby_profiles`, and never touches the app-only `growth_measurements` / `health_events`
+   tables — so data logged in the app survives ingests.
 3. **Schema mismatch.** dbt sources reference `baby_app.<table>`, but the loader writes to
    `public` locally and FastAPI reads `public`. The existing dbt models are disconnected from the
    real data; Phase 2 fixes the source definitions.
@@ -117,7 +118,6 @@ against Supabase later.
 
 - **Growth / health comparisons** — `growth_measurements` and `health_events` tables exist in the
   app but the pipeline has no data source for them.
-- **Upsert-style loading** to preserve events logged through the app between ingests.
 
 ## Definition of done
 
