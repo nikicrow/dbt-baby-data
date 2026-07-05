@@ -86,7 +86,7 @@ BABIES: list[BabyConfig] = [
     ),
     BabyConfig(
         name="Imogen",
-        date_of_birth="2026-03-14",  # inferred: earliest tracked entry is 14/3/26
+        date_of_birth="2026-03-13",  # confirmed by parents
         gender="female",
         timezone="Australia/Sydney",
         datetime_format="%d/%m/%y %I:%M %p",  # app exports day-first format
