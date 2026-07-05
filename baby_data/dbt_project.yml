@@ -34,6 +34,15 @@ models:
     # Config indicated by + and applies to all files under models/example/
     example:
       +materialized: view
+    raw:
+      +materialized: view
+    staging:
+      +materialized: view
+    marts:
+      # Tables in a literal `marts` schema (see macros/generate_schema_name.sql)
+      # so the app backend can read them without knowing the dbt target schema.
+      +materialized: table
+      +schema: marts
 
 seeds:
   baby_data:

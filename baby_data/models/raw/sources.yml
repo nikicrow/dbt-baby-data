@@ -2,8 +2,10 @@ version: 2
 
 sources:
   - name: baby_app
-    database: baby_data
-    schema: public
+    # Local: database baby_data, schema public (where load_to_database.py writes).
+    # Supabase: override via DBT_SOURCE_DATABASE=postgres, DBT_SOURCE_SCHEMA=baby_data.
+    database: "{{ env_var('DBT_SOURCE_DATABASE', 'baby_data') }}"
+    schema: "{{ env_var('DBT_SOURCE_SCHEMA', 'public') }}"
     tables:
       - name: baby_profiles
       - name: diaper_events
