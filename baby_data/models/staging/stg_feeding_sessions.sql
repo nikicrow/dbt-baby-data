@@ -28,6 +28,13 @@ joined as (
         f.breast_started,
         f.left_breast_duration,
         f.right_breast_duration,
+        -- Sum of the per-side durations. For breast feeds this currently always
+        -- equals duration_minutes (the tracker's total IS left + right), but it
+        -- is derived independently of end_time so a divergence would be visible.
+        case
+            when f.left_breast_duration is not null or f.right_breast_duration is not null
+                then coalesce(f.left_breast_duration, 0) + coalesce(f.right_breast_duration, 0)
+        end as breast_duration_minutes,
         f.volume_offered_ml,
         f.volume_consumed_ml,
         f.start_time::date - p.date_of_birth as age_days,

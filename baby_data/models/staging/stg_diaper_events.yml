@@ -1,0 +1,28 @@
+version: 2
+
+models:
+  - name: stg_diaper_events
+    description: Diaper events joined to profiles, with age at time of event.
+    columns:
+      - name: diaper_id
+        description: Primary key (diaper_events.id).
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: date_of_birth
+        description: Baby's date of birth, used for age calculations.
+      - name: event_time
+        description: When the nappy change happened (naive local time).
+        tests: [not_null]
+      - name: has_urine
+        description: True for wet or mixed nappies.
+      - name: has_stool
+        description: True for dirty or mixed nappies.
+      - name: age_days
+        description: Baby's age in whole days on the event date.
+        tests: [not_null]
+      - name: age_weeks
+        description: Baby's age in completed weeks on the event date.

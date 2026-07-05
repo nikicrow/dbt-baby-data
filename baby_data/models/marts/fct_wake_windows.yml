@@ -1,0 +1,27 @@
+version: 2
+
+models:
+  - name: fct_wake_windows
+    description: >
+      Awake gaps between consecutive sleeps per baby, daytime only (the window
+      must open between 6am and 9pm), bounded to 5-360 minutes to exclude
+      split log entries and tracking gaps.
+    columns:
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: wake_start
+        description: When the window opened (previous sleep's end_time).
+      - name: wake_end
+        description: When the window closed (next sleep's start_time).
+      - name: wake_window_minutes
+        description: Whole minutes awake between the two sleeps (5-360 by definition).
+        tests: [not_null]
+      - name: calendar_date
+        description: The calendar date the window opened.
+      - name: age_days
+        description: Baby's age in whole days when the window opened.
+      - name: age_weeks
+        description: Baby's age in completed weeks when the window opened.

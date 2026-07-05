@@ -1,0 +1,50 @@
+version: 2
+
+models:
+  - name: stg_feeding_sessions
+    description: Feeding sessions joined to profiles, with age at time of feed.
+    columns:
+      - name: feeding_id
+        description: Primary key (feeding_sessions.id).
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: date_of_birth
+        description: Baby's date of birth, used for age calculations.
+      - name: start_time
+        description: When the feed started (naive local time).
+        tests: [not_null]
+      - name: end_time
+        description: When the feed ended. Equals start_time for expressed-milk rows with no duration.
+      - name: duration_minutes
+        description: Whole minutes between start_time and end_time (the tracker's total).
+      - name: feeding_type
+        description: BREAST (nursing) or BOTTLE (pumped or expressed milk).
+        tests:
+          - not_null
+          - accepted_values:
+              values: ['BREAST', 'BOTTLE', 'SOLID']
+      - name: breast_started
+        description: Side the feed started on (LEFT/RIGHT), when logged.
+      - name: left_breast_duration
+        description: Minutes on the left side, when logged.
+      - name: right_breast_duration
+        description: Minutes on the right side, when logged.
+      - name: breast_duration_minutes
+        description: >
+          left + right side minutes (null when neither side logged). Currently
+          always equals duration_minutes for breast feeds because the tracker's
+          total is the sum of sides, but derived independently of end_time so a
+          divergence would show up here.
+      - name: volume_offered_ml
+        description: Millilitres offered (bottle feeds).
+      - name: volume_consumed_ml
+        description: Millilitres consumed (bottle feeds).
+      - name: age_days
+        description: Baby's age in whole days on the feed's start date.
+        tests: [not_null]
+      - name: age_weeks
+        description: Baby's age in completed weeks on the feed's start date.
