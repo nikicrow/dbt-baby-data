@@ -1,0 +1,31 @@
+version: 2
+
+models:
+  - name: stg_sleep_sessions
+    description: Sleep sessions joined to profiles, with age at time of sleep.
+    columns:
+      - name: sleep_id
+        description: Primary key (sleep_sessions.id).
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: date_of_birth
+        description: Baby's date of birth, used for age calculations.
+      - name: start_time
+        description: When the sleep started (naive local time).
+        tests: [not_null]
+      - name: end_time
+        description: When the sleep ended.
+      - name: duration_minutes
+        description: Whole minutes between start_time and end_time.
+        tests: [not_null]
+      - name: sleep_type
+        description: NIGHTTIME or NAP as classified by the ingest transform (fct_sleep_sessions re-derives its own is_night).
+      - name: age_days
+        description: Baby's age in whole days on the sleep's start date.
+        tests: [not_null]
+      - name: age_weeks
+        description: Baby's age in completed weeks on the sleep's start date.

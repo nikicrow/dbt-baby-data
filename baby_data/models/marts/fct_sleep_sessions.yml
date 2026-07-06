@@ -1,0 +1,40 @@
+version: 2
+
+models:
+  - name: fct_sleep_sessions
+    description: >
+      Sleep sessions classified as night or nap. Night = starts 7pm-7am at any
+      duration, or 6-7pm when longer than 3h (toddler bedtimes drift before
+      7pm; short evening catnaps stay naps). Night segments are attributed to
+      the date the night started, so a 2am waking belongs to the previous
+      date's night.
+    columns:
+      - name: sleep_id
+        description: Primary key, carried from stg_sleep_sessions.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: date_of_birth
+        description: Baby's date of birth.
+      - name: start_time
+        description: When the sleep started.
+      - name: end_time
+        description: When the sleep ended.
+      - name: duration_minutes
+        description: Whole minutes of sleep.
+      - name: sleep_type
+        description: The ingest transform's NIGHTTIME/NAP label (kept for comparison; is_night is authoritative here).
+      - name: age_days
+        description: Baby's age in whole days on the start date.
+      - name: age_weeks
+        description: Baby's age in completed weeks on the start date.
+      - name: calendar_date
+        description: The calendar date the sleep started.
+        tests: [not_null]
+      - name: is_night
+        description: True when the session counts toward night sleep (see model description for the rule).
+        tests: [not_null]
+      - name: night_date
+        description: The date the night started (null for naps). A segment starting 2am on the 5th has night_date of the 4th.

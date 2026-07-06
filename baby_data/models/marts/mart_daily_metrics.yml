@@ -1,0 +1,57 @@
+version: 2
+
+models:
+  - name: mart_daily_metrics
+    description: >
+      One row per baby per day - the table the frontend's Compare tab reads.
+      Join babies on age_days/age_weeks for age-aligned comparison. Night
+      metrics belong to the date the night STARTED, so night_sleep_minutes on
+      1 July means "the night of 1 July" including segments past midnight.
+    columns:
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+        tests: [not_null]
+      - name: metric_date
+        description: Calendar date the row describes. One row per baby per date between the baby's first and last tracked event.
+        tests: [not_null]
+      - name: age_days
+        description: Baby's age in whole days on metric_date.
+        tests: [not_null]
+      - name: age_weeks
+        description: Baby's age in completed weeks on metric_date.
+        tests: [not_null]
+      - name: night_sleep_minutes
+        description: Total minutes of night sleep for the night starting this date. 0 when nothing was logged.
+      - name: night_sleep_segments
+        description: Number of separate sleep entries making up the night (a proxy for night wakings). Null when no night sleep logged.
+      - name: longest_night_stretch_minutes
+        description: Longest single unbroken sleep segment of the night.
+      - name: nap_count
+        description: Number of daytime naps started this date.
+      - name: total_nap_minutes
+        description: Total minutes napped this date.
+      - name: avg_nap_minutes
+        description: Average nap length this date. Null when no naps.
+      - name: feed_count
+        description: Feeds started this date (breast + bottle).
+      - name: breast_feed_count
+        description: Nursing sessions this date.
+      - name: bottle_feed_count
+        description: Bottle feeds this date (pumped or expressed milk).
+      - name: total_volume_ml
+        description: Total millilitres consumed from bottles this date. Null when no volumes logged.
+      - name: avg_feed_interval_minutes
+        description: Average gap between consecutive feed starts assigned to this date (gaps of 1-720 minutes; longer gaps treated as tracking gaps).
+      - name: avg_wake_window_minutes
+        description: Average daytime wake window opening this date.
+      - name: max_wake_window_minutes
+        description: Longest daytime wake window opening this date.
+      - name: diaper_count
+        description: Nappy changes this date.
+      - name: wet_diaper_count
+        description: Nappies with urine this date.
+      - name: dirty_diaper_count
+        description: Nappies with stool this date.
