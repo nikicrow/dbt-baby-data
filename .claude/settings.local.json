@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(source .venv/Scripts/activate)",
+      "Bash(python -c \":*)",
+      "Bash(wc -l /c/Users/nikil/dbt-baby-data/baby_data/seeds/*.csv)",
+      "Bash(dbt ls -s state:modified+)",
+      "Bash(dbt ls)",
+      "Bash(gh api repos/nikicrow/baby-data-app-2025/contents/backend/app/models --jq '.[].name')",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(python scripts/transform_seeds.py)",
+      "Bash(.venv/Scripts/pip list)",
+      "Bash(.venv/Scripts/pip install psycopg2-binary -q)",
+      "Bash(pip install psycopg2-binary -q)",
+      "Bash(pip install psycopg2-binary)",
+      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=baby_data DB_USER=postgres DB_PASSWORD=Ember1808 DB_SCHEMA=public python scripts/load_to_database.py)",
+      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=baby_data DB_USER=postgres DB_PASSWORD=Ember1808 DB_SCHEMA=public python scripts/load_to_database.py --force)",
+      "Bash(DB_HOST=localhost DB_PORT=5432 DB_NAME=baby_data DB_USER=postgres DB_PASSWORD=Ember1808 python -c \":*)"
+    ]
+  }
+}
