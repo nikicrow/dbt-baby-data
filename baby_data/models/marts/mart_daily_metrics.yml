@@ -29,6 +29,10 @@ models:
         description: Number of separate sleep entries making up the night (a proxy for night wakings). Null when no night sleep logged.
       - name: longest_night_stretch_minutes
         description: Longest single unbroken sleep segment of the night.
+      - name: awake_at_night_minutes
+        description: Total minutes awake between night sleep segments belonging to this night (gaps between consecutive night-classified sleep entries sharing the same night_date). Null when the night has one or zero segments logged.
+      - name: night_waking_count
+        description: Number of awake gaps between night sleep segments this night. Null when the night has one or zero segments logged.
       - name: nap_count
         description: Number of daytime naps started this date.
       - name: total_nap_minutes

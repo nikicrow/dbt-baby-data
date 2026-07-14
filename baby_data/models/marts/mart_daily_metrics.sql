@@ -65,6 +65,28 @@ night_sleep as (
 
 ),
 
+night_wakings as (
+
+    select
+        baby_id,
+        night_date as metric_date,
+        sum(extract(epoch from (next_start - end_time)) / 60)::int as awake_at_night_minutes,
+        count(*) as night_waking_count
+    from (
+        select
+            baby_id,
+            night_date,
+            end_time,
+            lead(start_time) over (partition by baby_id, night_date order by start_time)
+                as next_start
+        from {{ ref('fct_sleep_sessions') }}
+        where is_night
+    ) gaps
+    where next_start is not null
+    group by 1, 2
+
+),
+
 naps as (
 
     select
@@ -152,6 +174,8 @@ select
     coalesce(ns.night_sleep_minutes, 0) as night_sleep_minutes,
     ns.night_sleep_segments,
     ns.longest_night_stretch_minutes,
+    nw.awake_at_night_minutes,
+    nw.night_waking_count,
 
     coalesce(n.nap_count, 0) as nap_count,
     coalesce(n.total_nap_minutes, 0) as total_nap_minutes,
@@ -172,6 +196,7 @@ select
 
 from date_spine d
 left join night_sleep ns on ns.baby_id = d.baby_id and ns.metric_date = d.metric_date
+left join night_wakings nw on nw.baby_id = d.baby_id and nw.metric_date = d.metric_date
 left join naps n on n.baby_id = d.baby_id and n.metric_date = d.metric_date
 left join feeds f on f.baby_id = d.baby_id and f.metric_date = d.metric_date
 left join feed_intervals fi on fi.baby_id = d.baby_id and fi.metric_date = d.metric_date
