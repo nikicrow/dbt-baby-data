@@ -98,5 +98,26 @@ dbt run
 dbt test
 ```
 
-Against Supabase, override the source location with:
-`DBT_SOURCE_DATABASE=postgres DBT_SOURCE_SCHEMA=baby_data`.
+Against Supabase, override the source database with `DBT_SOURCE_DATABASE=postgres`
+and use `--target supabase`. The source schema stays `public` (the default) —
+that's where the app's Alembic migrations create its tables, on Supabase and
+locally alike.
+
+## CI
+
+`.github/workflows/dbt-ci.yml` runs `dbt build` on every PR into `main`. It
+reads the real source tables in Supabase and builds the models into a
+throwaway `ci_pr_<n>` schema (marts land in `ci_pr_<n>_marts`, see
+`macros/generate_schema_name.sql`), then drops both schemas afterwards. If the
+tests fail, the PR check goes red.
+
+CI uses its own profile at `ci/profiles.yml`, kept out of `baby_data/` so it
+doesn't shadow your local `~/.dbt/profiles.yml`. It needs these repo secrets:
+
+| Secret | Value |
+|---|---|
+| `SUPABASE_DB_HOST` | Session pooler host, **not** `db.<ref>.supabase.co` — the direct host is IPv6-only and GitHub runners are IPv4-only |
+| `SUPABASE_DB_PORT` | `5432` |
+| `SUPABASE_DB_NAME` | `postgres` |
+| `SUPABASE_DB_USER` | Pooler user, e.g. `postgres.<project-ref>` |
+| `SUPABASE_DB_PASSWORD` | Database password |

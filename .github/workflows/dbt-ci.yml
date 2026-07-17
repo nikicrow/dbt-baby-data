@@ -1,0 +1,61 @@
+name: dbt build
+
+on:
+  pull_request:
+    branches: [main]
+
+# One CI build per PR; a new push cancels the in-flight run so two builds
+# never share the same ci_pr_<n> schema.
+concurrency:
+  group: dbt-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: dbt build (test schema)
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
+      SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
+      SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
+      SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
+      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+      # Sources are the app's Alembic-managed tables, which live in Supabase's
+      # public schema. Models are built into a throwaway per-PR schema.
+      DBT_SOURCE_DATABASE: postgres
+      DBT_SOURCE_SCHEMA: public
+      DBT_TARGET_SCHEMA: ci_pr_${{ github.event.pull_request.number }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --frozen
+
+      - name: dbt deps
+        working-directory: baby_data
+        run: uv run dbt deps --profiles-dir ../ci
+
+      # Seeds are raw Baby Tracker exports consumed by scripts/transform_seeds.py,
+      # not by any model, so building them here would just copy CSVs for nothing.
+      - name: dbt build
+        working-directory: baby_data
+        run: >
+          uv run dbt build
+          --target ci
+          --profiles-dir ../ci
+          --exclude resource_type:seed
+
+      # Runs even when the build fails, so a red PR doesn't leave schemas behind.
+      - name: Drop CI schemas
+        if: always()
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          psql "sslmode=require host=$SUPABASE_DB_HOST port=${SUPABASE_DB_PORT:-5432} dbname=${SUPABASE_DB_NAME:-postgres} user=$SUPABASE_DB_USER" \
+            -c "DROP SCHEMA IF EXISTS \"$DBT_TARGET_SCHEMA\" CASCADE;" \
+            -c "DROP SCHEMA IF EXISTS \"${DBT_TARGET_SCHEMA}_marts\" CASCADE;"
