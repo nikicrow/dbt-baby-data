@@ -76,7 +76,8 @@ class SupabaseDatabaseConfig(DatabaseConfig):
     name: str = "postgres"
     password: str
     sslmode: str = "require"
-    schema: str = "baby_data"
+    # The app's Alembic migrations create its tables in public, same as local.
+    schema: str = "public"
 
     model_config = {"env_prefix": "SUPABASE_DB_"}
 
