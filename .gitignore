@@ -1,3 +1,14 @@
 .venv/
 logs/
 .env
+__pycache__/
+*.pyc
+
+# Machine-local Claude Code state. settings.local.json records approved
+# commands verbatim, which can include credentials passed on the command
+# line — it must never be committed. Share settings via .claude/settings.json.
+.claude/settings.local.json
+.claude/worktrees/
+
+# dbt writes an anonymous usage-tracking id next to any profiles.yml it uses.
+.user.yml

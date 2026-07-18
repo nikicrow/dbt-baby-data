@@ -1,0 +1,24 @@
+# CI-only dbt profile, used by .github/workflows/dbt-ci.yml via
+# `--profiles-dir ci`. It lives here rather than in baby_data/ so it never
+# shadows the developer profile in ~/.dbt/profiles.yml during local runs —
+# dbt prefers a profiles.yml found in the working directory.
+#
+# Every value comes from the environment; no credentials are committed.
+baby_data:
+  target: ci
+  outputs:
+    ci:
+      type: postgres
+      # Must be the Supabase session pooler host, not db.<ref>.supabase.co:
+      # the direct host is IPv6-only and GitHub Actions runners are IPv4-only.
+      host: "{{ env_var('SUPABASE_DB_HOST') }}"
+      port: "{{ env_var('SUPABASE_DB_PORT', '5432') | int }}"
+      dbname: "{{ env_var('SUPABASE_DB_NAME', 'postgres') }}"
+      user: "{{ env_var('SUPABASE_DB_USER') }}"
+      password: "{{ env_var('SUPABASE_DB_PASSWORD') }}"
+      # Throwaway per-PR schema, e.g. ci_pr_42. The workflow drops it afterwards.
+      schema: "{{ env_var('DBT_TARGET_SCHEMA') }}"
+      threads: 4
+      keepalives_idle: 0
+      connect_timeout: 10
+      sslmode: require
