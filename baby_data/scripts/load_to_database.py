@@ -28,6 +28,7 @@ import csv
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 try:
     import psycopg2
@@ -64,7 +65,10 @@ class DatabaseConfig(BaseSettings):
     sslmode: str = "disable"
     schema: str = "public"
 
-    model_config = {"env_file": str(ENV_FILE)}
+    # extra="ignore": the shared .env holds both the DB_* and SUPABASE_DB_*
+    # blocks, so whichever config is loading must ignore the other prefix's
+    # keys rather than rejecting them as unexpected extras.
+    model_config = {"env_file": str(ENV_FILE), "extra": "ignore"}
 
 
 class LocalDatabaseConfig(DatabaseConfig):
@@ -89,8 +93,13 @@ def get_config(target: str) -> DatabaseConfig:
 
 
 def get_connection_string(config: DatabaseConfig) -> str:
+    # Percent-encode credentials so a password (or user) containing URL-special
+    # characters like @ : / ? # can't corrupt the connection URI. Supabase
+    # database passwords often include such characters.
+    user = quote(config.user, safe="")
+    password = quote(config.password, safe="")
     return (
-        f"postgresql://{config.user}:{config.password}"
+        f"postgresql://{user}:{password}"
         f"@{config.host}:{config.port}/{config.name}"
         f"?sslmode={config.sslmode}"
     )
