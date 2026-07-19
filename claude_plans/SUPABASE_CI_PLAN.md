@@ -11,18 +11,54 @@ per-PR schema.
 
 | Phase | What | State |
 |-------|------|-------|
-| 0 | Bootstrap Supabase: create source tables, load data | **Outstanding — blocks everything** |
+| 0 | Bootstrap Supabase: create source tables, load data | **Done (2026-07-19)** |
 | 1 | dbt config: CI profile, schema isolation | Done (`71cc888`) |
-| 2 | GitHub Actions workflow + repo secrets | Done in repo (`71cc888`); secrets not yet set |
+| 2 | GitHub Actions workflow + repo secrets | Workflow done (`71cc888`); **repo secrets still to be set** |
 
-Phases 1 and 2 are committed but **cannot go green until Phase 0 lands** — the
-Supabase project is currently empty, so dbt fails on missing source relations.
+Phase 0 landed on 2026-07-19 (see [Completed](#completed--2026-07-19) below).
+`dbt build` now succeeds against Supabase with real data. The only task left is
+adding the five repo secrets, after which the CI check goes green on the first
+PR into `main`.
+
+## Completed — 2026-07-19
+
+Phase 0 was executed against `Baby data prod` (ref `ffbvvcrynewjnafycrnx`):
+
+1. **Schema created via Alembic.** Ran `alembic upgrade head` from the app repo
+   (`baby-data-app-2025/backend`) against the Supabase session pooler. This
+   created the six source tables plus `alembic_version`, stamped at head
+   `e7a91b4c2d58` — so the app's migration history matches Supabase exactly.
+2. **Data loaded.** `load_to_database.py --target supabase` inserted the
+   pipeline data: `baby_profiles` 2, `diaper_events` 3182, `sleep_sessions`
+   2519, `feeding_sessions` 3008 — 8711 rows total. `growth_measurements` and
+   `health_events` are app-only and were left empty.
+3. **dbt build verified.** Ran the exact CI command locally against Supabase
+   (`dbt build --target ci --profiles-dir ../ci --exclude resource_type:seed`
+   with `DBT_SOURCE_DATABASE=postgres`, `DBT_SOURCE_SCHEMA=public`), building
+   into a throwaway `ci_local_test` schema: **PASS=43 WARN=0 ERROR=0**. The
+   test schemas were dropped afterwards.
+
+### Fixes made along the way (`load_to_database.py`)
+
+- **Percent-encode credentials** in `get_connection_string` — a Supabase
+  password containing URL-special characters (`@ : / ?`) would otherwise
+  corrupt the connection URI.
+- **`extra="ignore"` on the config classes** — the shared `.env` holds both the
+  `DB_*` and `SUPABASE_DB_*` blocks, so loading the Supabase config was failing
+  with `extra_forbidden` errors on the local `DB_*` keys.
+
+### Connection details (confirmed from the dashboard)
+
+- Pooler host: `aws-1-ap-southeast-2.pooler.supabase.com` — note **`aws-1`**,
+  not `aws-0`; confirmed via Connect → **Server** → Session pooler.
+- User `postgres.ffbvvcrynewjnafycrnx`, port `5432`, db `postgres`, `sslmode=require`.
 
 ## Key facts
 
 - Supabase project ref: `ffbvvcrynewjnafycrnx`, region `ap-southeast-2`.
-- As of 2026-07-17 the project contains **only** Supabase's own system schemas
-  (`auth`, `storage`, `realtime`, `vault`). None of the baby data exists there.
+- As of 2026-07-19 the `public` schema holds the six app tables plus
+  `alembic_version`, populated with pipeline data (see Completed above). Before
+  that the project contained only Supabase's own system schemas.
 - The six source tables are owned by the **app repo** (`baby-data-app-2025`),
   created by its Alembic migrations. This repo only reads them as dbt sources.
 - Sources live in the `public` schema on Supabase, matching local. Alembic
@@ -33,14 +69,22 @@ Supabase project is currently empty, so dbt fails on missing source relations.
 
 ---
 
-## Phase 0 — Bootstrap Supabase (outstanding)
+## Phase 0 — Bootstrap Supabase (done — 2026-07-19)
+
+> ✅ Completed on 2026-07-19 — see [Completed](#completed--2026-07-19). The steps
+> below are retained as the record of how it was done and how to redo it on a
+> fresh project. In practice the data load ran `load_to_database.py --target
+> supabase` directly (the `transformed_data/` CSVs were already present) rather
+> than the full `ingest.py`, and credentials were supplied via `SUPABASE_DB_*`
+> environment variables rather than the `.env` file.
 
 ### Get the connection details
 
 Supabase dashboard → **Project Settings → Database** (or the **Connect**
 button). Use the **Session pooler** block, *not* Direct connection:
 
-- Host: `aws-0-ap-southeast-2.pooler.supabase.com` (confirm in the dashboard)
+- Host: `aws-1-ap-southeast-2.pooler.supabase.com` (confirmed in the dashboard;
+  note it is `aws-1`, not `aws-0`)
 - User: `postgres.ffbvvcrynewjnafycrnx` — the pooler user, not plain `postgres`
 - Port `5432`, database `postgres`, `sslmode=require`
 
@@ -142,11 +186,11 @@ Settings → Secrets and variables → Actions:
 
 | Secret | Value |
 |--------|-------|
-| `SUPABASE_DB_HOST` | Session pooler host — **not** `db.<ref>.supabase.co` |
+| `SUPABASE_DB_HOST` | `aws-1-ap-southeast-2.pooler.supabase.com` (session pooler — **not** `db.<ref>.supabase.co`) |
 | `SUPABASE_DB_PORT` | `5432` |
 | `SUPABASE_DB_NAME` | `postgres` |
 | `SUPABASE_DB_USER` | `postgres.ffbvvcrynewjnafycrnx` |
-| `SUPABASE_DB_PASSWORD` | Database password |
+| `SUPABASE_DB_PASSWORD` | Database password (paste raw — no percent-encoding needed here) |
 
 ---
 
@@ -159,9 +203,21 @@ problems first — just read the failure as a to-do list rather than a defect.
 
 ## Known gaps / follow-ups
 
+- **RLS is disabled on all Supabase tables.** Supabase flags this as *critical*:
+  the tables are reachable through its auto-generated REST API using the public
+  anon key, so anyone with that key could read or modify the data. dbt and the
+  app connect as the `postgres` role and bypass RLS, so nothing is currently
+  broken — but before this is genuinely prod, enable RLS **with** policies
+  (enabling it without policies blocks all API access). See the
+  [RLS guide](https://supabase.com/docs/guides/database/postgres/row-level-security).
 - **The app still points at local Postgres.** Making Supabase genuinely prod
   means migrating the app's connection too, and deciding what happens to the
   existing local data. Not covered here.
+- **`baby_data/scripts/.env.example` still shows the direct-host format**
+  (`db.xxxxxxxxxxxx.supabase.co`, user `postgres`). It should show the pooler
+  host and `postgres.<ref>` user to match how CI and the loader actually connect.
+- **`models/raw/sources.yml` has a stale comment** saying the Supabase source
+  schema is `baby_data`; it is `public` (the code already defaults correctly).
 - **CI reads prod sources.** A PR build can't corrupt them (dbt only reads
   sources, and writes go to the per-PR schema), but the build is only as stable
   as prod data — a bad ingest can turn PRs red. Seed-based fixtures would
