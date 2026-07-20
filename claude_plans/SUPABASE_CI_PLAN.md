@@ -204,13 +204,14 @@ problems first — just read the failure as a to-do list rather than a defect.
 
 ## Known gaps / follow-ups
 
-- **RLS is disabled on all Supabase tables.** Supabase flags this as *critical*:
-  the tables are reachable through its auto-generated REST API using the public
-  anon key, so anyone with that key could read or modify the data. dbt and the
-  app connect as the `postgres` role and bypass RLS, so nothing is currently
-  broken — but before this is genuinely prod, enable RLS **with** policies
-  (enabling it without policies blocks all API access). See the
-  [RLS guide](https://supabase.com/docs/guides/database/postgres/row-level-security).
+- ~~**RLS is disabled on all Supabase tables.**~~ **Resolved (2026-07-20, PR #11.)**
+  RLS is now enabled on all 7 tables and the `anon`/`authenticated` grants were
+  revoked, since nothing uses the REST/GraphQL API (app + dbt connect as
+  `postgres`, which bypasses RLS). No policies were added — the tables are fully
+  locked to those roles by design. See
+  [`supabase/migrations/`](../supabase/migrations/) for the applied SQL. If
+  anything ever needs REST access, add scoped policies rather than reopening
+  grants.
 - **The app still points at local Postgres.** Making Supabase genuinely prod
   means migrating the app's connection too, and deciding what happens to the
   existing local data. Not covered here.
