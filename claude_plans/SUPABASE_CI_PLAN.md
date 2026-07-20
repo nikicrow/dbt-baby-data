@@ -13,12 +13,13 @@ per-PR schema.
 |-------|------|-------|
 | 0 | Bootstrap Supabase: create source tables, load data | **Done (2026-07-19)** |
 | 1 | dbt config: CI profile, schema isolation | Done (`71cc888`) |
-| 2 | GitHub Actions workflow + repo secrets | Workflow done (`71cc888`); **repo secrets still to be set** |
+| 2 | GitHub Actions workflow + repo secrets | **Done** — workflow (`71cc888`), five repo secrets set, CI green on PR |
 
 Phase 0 landed on 2026-07-19 (see [Completed](#completed--2026-07-19) below).
-`dbt build` now succeeds against Supabase with real data. The only task left is
-adding the five repo secrets, after which the CI check goes green on the first
-PR into `main`.
+`dbt build` now succeeds against Supabase with real data. All five repo secrets
+are set and the CI check is green on a PR into `main`, so Phases 0–2 are
+complete. Remaining work is tracked under [Known gaps / follow-ups](#known-gaps--follow-ups)
+(RLS, app connection cutover).
 
 ## Completed — 2026-07-19
 
@@ -165,7 +166,7 @@ DBT_SOURCE_DATABASE=postgres dbt build --target supabase
 - **`baby_data/scripts/load_to_database.py`** — the Supabase loader defaulted to
   a `baby_data` schema; now `public`, matching where Alembic creates the tables.
 
-## Phase 2 — CI workflow (done in repo)
+## Phase 2 — CI workflow (done)
 
 `.github/workflows/dbt-ci.yml` runs on `pull_request` into `main`:
 
@@ -182,7 +183,7 @@ the same schema.
 
 ### Required repo secrets
 
-Settings → Secrets and variables → Actions:
+All five are set (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |--------|-------|
@@ -203,13 +204,14 @@ problems first — just read the failure as a to-do list rather than a defect.
 
 ## Known gaps / follow-ups
 
-- **RLS is disabled on all Supabase tables.** Supabase flags this as *critical*:
-  the tables are reachable through its auto-generated REST API using the public
-  anon key, so anyone with that key could read or modify the data. dbt and the
-  app connect as the `postgres` role and bypass RLS, so nothing is currently
-  broken — but before this is genuinely prod, enable RLS **with** policies
-  (enabling it without policies blocks all API access). See the
-  [RLS guide](https://supabase.com/docs/guides/database/postgres/row-level-security).
+- ~~**RLS is disabled on all Supabase tables.**~~ **Resolved (2026-07-20, PR #11.)**
+  RLS is now enabled on all 7 tables and the `anon`/`authenticated` grants were
+  revoked, since nothing uses the REST/GraphQL API (app + dbt connect as
+  `postgres`, which bypasses RLS). No policies were added — the tables are fully
+  locked to those roles by design. See
+  [`supabase/migrations/`](../supabase/migrations/) for the applied SQL. If
+  anything ever needs REST access, add scoped policies rather than reopening
+  grants.
 - **The app still points at local Postgres.** Making Supabase genuinely prod
   means migrating the app's connection too, and deciding what happens to the
   existing local data. Not covered here.
