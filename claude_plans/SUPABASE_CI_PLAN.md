@@ -13,12 +13,13 @@ per-PR schema.
 |-------|------|-------|
 | 0 | Bootstrap Supabase: create source tables, load data | **Done (2026-07-19)** |
 | 1 | dbt config: CI profile, schema isolation | Done (`71cc888`) |
-| 2 | GitHub Actions workflow + repo secrets | Workflow done (`71cc888`); **repo secrets still to be set** |
+| 2 | GitHub Actions workflow + repo secrets | **Done** — workflow (`71cc888`), five repo secrets set, CI green on PR |
 
 Phase 0 landed on 2026-07-19 (see [Completed](#completed--2026-07-19) below).
-`dbt build` now succeeds against Supabase with real data. The only task left is
-adding the five repo secrets, after which the CI check goes green on the first
-PR into `main`.
+`dbt build` now succeeds against Supabase with real data. All five repo secrets
+are set and the CI check is green on a PR into `main`, so Phases 0–2 are
+complete. Remaining work is tracked under [Known gaps / follow-ups](#known-gaps--follow-ups)
+(RLS, app connection cutover).
 
 ## Completed — 2026-07-19
 
@@ -165,7 +166,7 @@ DBT_SOURCE_DATABASE=postgres dbt build --target supabase
 - **`baby_data/scripts/load_to_database.py`** — the Supabase loader defaulted to
   a `baby_data` schema; now `public`, matching where Alembic creates the tables.
 
-## Phase 2 — CI workflow (done in repo)
+## Phase 2 — CI workflow (done)
 
 `.github/workflows/dbt-ci.yml` runs on `pull_request` into `main`:
 
@@ -182,7 +183,7 @@ the same schema.
 
 ### Required repo secrets
 
-Settings → Secrets and variables → Actions:
+All five are set (Settings → Secrets and variables → Actions):
 
 | Secret | Value |
 |--------|-------|
