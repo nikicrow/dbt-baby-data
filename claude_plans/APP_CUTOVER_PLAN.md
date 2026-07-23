@@ -68,9 +68,9 @@ actual deploy lands as a follow-up).
 
 ---
 
-## Key decisions needed (resolve before building)
+## Key decisions (resolved 2026-07-23, via PR #13 review)
 
-### Decision 1 — Sequencing of the Vercel deploy
+### Decision 1 — Sequencing of the Vercel deploy — **DECIDED: 1a**
 Vercel (frontend + backend) is the stated end goal, but it doesn't have to be
 step one. Two orderings:
 - **1a. Cut the local backend over to Supabase first**, prove the app works
@@ -79,11 +79,11 @@ step one. Two orderings:
 - **1b. Go straight to Vercel** on Supabase. Fewer intermediate states but
   debugging DB + serverless + deploy at once.
 
-> Recommendation: **1a**. It de-risks the DB cutover independently, and Phase 3
-> below is written so the connection layer is **serverless-ready from day one**
-> (so moving to Vercel later is config, not a rewrite).
+> **Decided: 1a.** Cut the local backend over to Supabase first, prove it works,
+> then deploy to Vercel as a follow-up. Phase 3 keeps the connection layer
+> serverless-ready so the Vercel move is config, not a rewrite.
 
-### Decision 2 — What happens to existing local data?
+### Decision 2 — What happens to existing local data? — **DECIDED: 2b**
 Supabase has the **ingested** rows but not app-created rows that live only in
 local Postgres (notably `growth_measurements` / `health_events`, and any rows
 the app added or edited). Options:
@@ -92,7 +92,9 @@ the app added or edited). Options:
 - **2b. Treat Supabase's current state as the new baseline** and abandon
   local-only rows. Only safe if local has nothing worth keeping.
 
-> Needs a data audit first (Phase 0) — we can't assume which is right.
+> **Decided: 2b.** The local data was all test data — nothing worth keeping.
+> Supabase's current state is the baseline, so **Phase 0 (audit) and Phase 2
+> (data migration) are skipped.**
 
 ### Decision 3 — Which connection role?
 Cut over as `postgres` (matches dbt/app today, bypasses RLS) — simplest — or
@@ -126,11 +128,10 @@ Phase 5 doesn't require touching `database.py`.
 The app's analytics **depend on dbt marts existing in Supabase**, and the
 recurring ingest is what keeps both source data and marts fresh:
 
+Phases 0 and 2 are skipped (Decision 2b — local data was all test).
+
 ```
-Phase 0 (audit) --> Phase 1 (marts in Supabase) --> Phase 2 (data migration)
-                                                       |
-                                                       v
-                                    Phase 3 (repoint app, serverless-ready)
+Phase 1 (marts in Supabase) --> Phase 3 (repoint app, serverless-ready)
                                                        |
                         +------------------------------+------------------------------+
                         v                                                              v
@@ -144,10 +145,9 @@ Phase 0 (audit) --> Phase 1 (marts in Supabase) --> Phase 2 (data migration)
 
 ## Proposed phased plan
 
-### Phase 0 — Audit local data (decide Decision 2)
-- Connect to local Postgres and count rows per table, especially
-  `growth_measurements`, `health_events`, and any rows with `source != 'ingested'`.
-- Diff against Supabase counts. Output: a concrete migrate-or-abandon call.
+### Phase 0 — Audit local data — **SKIPPED (Decision 2b)**
+Local data was all test data; Supabase's current state is the baseline. No audit
+needed.
 
 ### Phase 1 — Build marts into Supabase (prod dbt run)
 - Run `dbt run --target supabase` (with `DBT_SOURCE_DATABASE=postgres`,
@@ -156,10 +156,8 @@ Phase 0 (audit) --> Phase 1 (marts in Supabase) --> Phase 2 (data migration)
   targets) — exactly where `analytics_service.py` looks.
 - Confirm `marts.mart_daily_metrics` exists and is populated.
 
-### Phase 2 — Migrate app-owned data (only if Decision 2a)
-- `pg_dump` the app-owned rows from local and load into Supabase, being careful
-  not to duplicate the already-loaded `source='ingested'` rows.
-- Re-run dbt marts afterward so metrics reflect the merged data.
+### Phase 2 — Migrate app-owned data — **SKIPPED (Decision 2b)**
+No local data to migrate.
 
 ### Phase 3 — Repoint the app (serverless-ready)
 - Make the connection **env-driven** in `config.py` / `database.py`:
@@ -242,12 +240,13 @@ Make it **one trustworthy command**, safe to re-run:
 ---
 
 ## Open questions (for you)
-1. Decision 1 sequencing: local-against-Supabase first, or straight to Vercel?
-2. Decision 2: is there local-only app data worth migrating, or is Supabase's
-   current state the baseline?
-3. Vercel: one monorepo project or two (frontend + backend)? Custom domain?
-4. Ingest cadence: purely manual after each export, or eventually scheduled?
-5. Keep connecting as `postgres`, or introduce a scoped app role later?
+- ~~Decision 1 sequencing~~ — **resolved: 1a** (local-against-Supabase first).
+- ~~Decision 2 local data~~ — **resolved: 2b** (Supabase is the baseline).
+1. Vercel: one monorepo project or two (frontend + backend)? Custom domain?
+2. Ingest cadence: purely manual after each export, or eventually scheduled?
+3. Keep connecting as `postgres`, or introduce a scoped app role later?
+4. Supabase DB password for the Phase 1 dbt run — how do you want to provide it
+   (export into the shell for me to drive, or you run the one command)?
 
 ## Out of scope (separate follow-ups)
 - A least-privilege app DB role / RLS policies — security follow-up.
