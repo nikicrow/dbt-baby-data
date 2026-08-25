@@ -3,11 +3,29 @@
 ## Context
 
 The previous direction ([APP_CUTOVER_PLAN.md](APP_CUTOVER_PLAN.md)) was to move the
-app onto Supabase and deploy frontend + backend to Vercel. Tailscale is now
-running on both the laptop (`unagi`, `100.121.167.36`) and the phone
-(`pixel-8-pro`), which makes a cloud host unnecessary: the app can run on the
-laptop and be reachable from the phone over the tailnet. That removes Supabase,
-Vercel, connection poolers, `NullPool`, and CORS from the picture entirely.
+app onto Supabase and deploy frontend + backend to Vercel. Tailscale makes a
+cloud host unnecessary: the app can run on the laptop and be reachable from the
+phone over the tailnet. That removes Supabase, Vercel, connection poolers,
+`NullPool`, and CORS from the picture entirely.
+
+**Tailnet correction (2026-08-25).** This plan was first written against a
+personal tailnet, `tail94d867.ts.net`, that turned out to be the wrong one — it
+was created by accident instead of joining the existing family tailnet. The
+laptop has since moved to `bennycrow91@gmail.com`'s tailnet, and every hostname
+below reflects that:
+
+| | old (wrong) | current |
+|---|---|---|
+| tailnet | `tail94d867.ts.net` | `tail53f4fd.ts.net` |
+| laptop | `unagi`, `100.121.167.36` | `unagi`, `100.79.143.69` |
+| app URL | `https://unagi.tail94d867.ts.net` | `https://unagi.tail53f4fd.ts.net` |
+
+The laptop kept the name `unagi` — no collision on the new tailnet. **The phone
+has not moved yet:** `pixel-8-pro` is still on the old tailnet, so it cannot
+reach the app until it logs in to the new one. The old profile (`fe8f`) still
+exists locally; `tailscale serve` config is stored per-profile, so switching
+back to it would silently leave the proxy unconfigured. Worth deleting once the
+new setup is trusted.
 
 **Good news from the investigation: the Supabase cutover was never executed.**
 `backend/.env` still sets only `POSTGRES_*` pointing at `localhost`, and there
@@ -27,7 +45,7 @@ Alembic is at head `e7a91b4c2d58`. So there is **no database migration to do** �
 "switch back to local Postgres" means *don't do the cutover* and delete the
 Supabase dependency that remains in dbt CI.
 
-**Outcome:** open `https://unagi.tail94d867.ts.net` on the phone, from anywhere,
+**Outcome:** open `https://unagi.tail53f4fd.ts.net` on the phone, from anywhere,
 and log a feed. One process, one URL, laptop-local data.
 
 ### Why the API has to be on the tailnet too
@@ -120,10 +138,13 @@ Verify `marts.mart_daily_metrics` advances past `2026-07-04` — the Insights ta
 
 ## Phase 3 — Build and run under Tailscale
 
-**One-time, in the Tailscale admin console (you must do this — no CLI
-equivalent):** DNS → HTTPS Certificates → **Enable**. `tailscale status --json`
-currently shows `CertDomains: null`, so it's off; without it there's no real
-cert and the phone can't "Add to Home Screen".
+**HTTPS certificates: already enabled — nothing to do.** This step originally
+called for turning on DNS → HTTPS Certificates in the admin console. That was
+true of the old tailnet, but the tailnet this laptop now belongs to already has
+it on: `tailscale status --json` reports
+`CertDomains: ['unagi.tail53f4fd.ts.net']`. The account also holds
+`https://tailscale.com/cap/is-admin` there, so no permission is needed from the
+tailnet owner either.
 
 Then:
 ```bash
@@ -136,13 +157,13 @@ cd C:/Users/nikil/baby-data-app-2025/backend && .venv/Scripts/python -m uvicorn 
 tailscale serve --bg 8000
 ```
 
-`tailscale serve` proxies `https://unagi.tail94d867.ts.net` → `127.0.0.1:8000`
+`tailscale serve` proxies `https://unagi.tail53f4fd.ts.net` → `127.0.0.1:8000`
 with a Let's Encrypt cert, and the config persists across reboots in the
 tailscaled state — it does not need re-running. Note this replaces the current
 `--host 0.0.0.0 --reload` invocation in `HOW_TO_RUN.md`: binding `0.0.0.0` also
 exposes a **completely unauthenticated CRUD API, DELETE included**, to whatever
-café Wi-Fi you're on. `127.0.0.1` + `tailscale serve` means only your two
-tailnet devices can reach it. `serve` may prompt for elevation on Windows.
+café Wi-Fi you're on. `127.0.0.1` + `tailscale serve` means only devices on the
+tailnet can reach it. `serve` may prompt for elevation on Windows.
 
 ## Phase 4 — Start at boot
 
@@ -219,9 +240,17 @@ This is a dashboard action for you.
 ## Verification
 
 1. `curl http://127.0.0.1:8000/health` → `{"status":"healthy",...}`.
-2. `curl https://unagi.tail94d867.ts.net/health` from the laptop, then
-   `tailscale serve status` shows the proxy.
-3. On the phone: open `https://unagi.tail94d867.ts.net` — valid cert, no
+2. `curl https://unagi.tail53f4fd.ts.net/health` from the laptop, then
+   `tailscale serve status` shows the proxy. **Caveat:** curl on Windows uses
+   schannel, and hitting the node's own tailnet name from that node returns a
+   bare `000` after a valid TLS handshake — intermittently, and for every path
+   including ones that had just worked. It is a local hairpin artifact, not a
+   server fault: the requests never reach uvicorn (nothing appears in its log).
+   Confirm with a different TLS stack instead, e.g.
+   `.venv/Scripts/python -c "import urllib.request;
+   print(urllib.request.urlopen('https://unagi.tail53f4fd.ts.net/health').read())"`,
+   or just test from the phone.
+3. On the phone: open `https://unagi.tail53f4fd.ts.net` — valid cert, no
    warning. Navigate to Insights and Activity History, then **hard-refresh on
    `/insights`** to prove the SPA fallback works.
 4. Log a feed from the phone, then confirm it landed:
