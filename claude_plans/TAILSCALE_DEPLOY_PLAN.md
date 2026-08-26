@@ -1,33 +1,70 @@
 # Deploying the Baby App on Tailscale, on Local Postgres
 
+## Status — 2026-08-25
+
+| Phase | State | Landed in |
+|---|---|---|
+| 1 — Serve the SPA from FastAPI | **Done** | app repo [#18](https://github.com/nikicrow/baby-data-app-2025/pull/18) |
+| 2 — Refresh local data | **Done** | dbt repo [#15](https://github.com/nikicrow/dbt-baby-data/pull/15) |
+| 3 — Build and run under Tailscale | **Laptop done; phone outstanding** | no code change |
+| 4 — Start at boot | Not started | |
+| 5 — Decommission Supabase | Not started | |
+| 6 — Docs | Not started | |
+
+**The one thing blocking a full end-to-end test:** the phone (`pixel-8-pro`) is
+still on the old tailnet. Everything on the laptop is built, running, and
+verified over HTTPS — but nothing has been opened from the phone yet, so
+verification steps 3, 4 and 7 below are untested.
+
 ## Context
 
 The previous direction ([APP_CUTOVER_PLAN.md](APP_CUTOVER_PLAN.md)) was to move the
-app onto Supabase and deploy frontend + backend to Vercel. Tailscale is now
-running on both the laptop (`unagi`, `100.121.167.36`) and the phone
-(`pixel-8-pro`), which makes a cloud host unnecessary: the app can run on the
-laptop and be reachable from the phone over the tailnet. That removes Supabase,
-Vercel, connection poolers, `NullPool`, and CORS from the picture entirely.
+app onto Supabase and deploy frontend + backend to Vercel. Tailscale makes a
+cloud host unnecessary: the app can run on the laptop and be reachable from the
+phone over the tailnet. That removes Supabase, Vercel, connection poolers,
+`NullPool`, and CORS from the picture entirely.
+
+**Tailnet correction (2026-08-25).** This plan was first written against a
+personal tailnet, `tail94d867.ts.net`, that turned out to be the wrong one — it
+was created by accident instead of joining the existing family tailnet. The
+laptop has since moved to `bennycrow91@gmail.com`'s tailnet, and every hostname
+below reflects that:
+
+| | old (wrong) | current |
+|---|---|---|
+| tailnet | `tail94d867.ts.net` | `tail53f4fd.ts.net` |
+| laptop | `unagi`, `100.121.167.36` | `unagi`, `100.79.143.69` |
+| app URL | `https://unagi.tail94d867.ts.net` | `https://unagi.tail53f4fd.ts.net` |
+
+The laptop kept the name `unagi` — no collision on the new tailnet. **The phone
+has not moved yet:** `pixel-8-pro` is still on the old tailnet, so it cannot
+reach the app until it logs in to the new one. The old profile (`fe8f`) still
+exists locally; `tailscale serve` config is stored per-profile, so switching
+back to it would silently leave the proxy unconfigured. Worth deleting once the
+new setup is trusted.
 
 **Good news from the investigation: the Supabase cutover was never executed.**
 `backend/.env` still sets only `POSTGRES_*` pointing at `localhost`, and there
-are zero references to Supabase anywhere in the app repo. The local `baby_data`
-database is complete and current with the last ingest:
+are zero references to Supabase anywhere in the app repo. Row counts, as first
+surveyed and after the Phase 2 refresh:
 
-| | rows |
-|---|---|
-| `public.baby_profiles` | 2 |
-| `public.diaper_events` | 3182 |
-| `public.feeding_sessions` | 3008 |
-| `public.sleep_sessions` | 2519 |
-| `public.growth_measurements` / `health_events` | 0 |
-| `marts.mart_daily_metrics` | 463 |
+| | at planning | after Phase 2 |
+|---|---|---|
+| `public.baby_profiles` | 2 | 2 |
+| `public.diaper_events` | 3182 | 3546 |
+| `public.feeding_sessions` | 3008 | 3382 |
+| `public.sleep_sessions` | 2519 | 2834 |
+| `public.growth_measurements` / `health_events` | 0 | 0 |
+| `marts.mart_daily_metrics` | 463 | 515 |
+
+`growth_measurements` and `health_events` stay empty because no seed data feeds
+them — expected, not a bug.
 
 Alembic is at head `e7a91b4c2d58`. So there is **no database migration to do** —
 "switch back to local Postgres" means *don't do the cutover* and delete the
 Supabase dependency that remains in dbt CI.
 
-**Outcome:** open `https://unagi.tail94d867.ts.net` on the phone, from anywhere,
+**Outcome:** open `https://unagi.tail53f4fd.ts.net` on the phone, from anywhere,
 and log a feed. One process, one URL, laptop-local data.
 
 ### Why the API has to be on the tailnet too
@@ -54,6 +91,9 @@ Two repos are involved: this one (`dbt-baby-data`) and the app repo
 ---
 
 ## Phase 1 — Serve the SPA from FastAPI (app repo)
+
+> **Done** — merged as app repo [#18](https://github.com/nikicrow/baby-data-app-2025/pull/18).
+> `.env.development` / `.env.production` and the `??` change in `api.ts` are all in place.
 
 Repo: `C:\Users\nikil\baby-data-app-2025`. Working tree is currently dirty
 (`backend/.env.example`, `backend/app/core/config.py` CORS-parsing change,
@@ -100,6 +140,16 @@ the localhost entries for dev.
 
 ## Phase 2 — Refresh local data
 
+> **Done** — merged as dbt repo [#15](https://github.com/nikicrow/dbt-baby-data/pull/15).
+> Ingested a fresh export (`csv (6).zip`) rather than the staged three-week-old
+> `csv (5).zip`, so data runs to **2026-08-25** rather than stopping at 2026-08-02.
+> `dbt run` built 12/12 models; `dbt test` passed 31/31, including both singular
+> assertions on `mart_daily_metrics`. Every replaced row was `source='ingested'`.
+>
+> **Gotcha:** run these under `uv run`. Bare `python` on PATH is system Python 3.13,
+> not the project `.venv`, and the load step dies with `pydantic-settings not
+> installed` — after the transform has already rewritten `seeds/`.
+
 Local Imogen data stops at `2026-07-04` and today is `2026-08-24`; the dbt repo
 has uncommitted changes to `baby_data/seeds/Imogen_{diaper,nursing,sleep}.csv`,
 so a newer export is already staged. In `C:\Users\nikil\dbt-baby-data`:
@@ -120,10 +170,27 @@ Verify `marts.mart_daily_metrics` advances past `2026-07-04` — the Insights ta
 
 ## Phase 3 — Build and run under Tailscale
 
-**One-time, in the Tailscale admin console (you must do this — no CLI
-equivalent):** DNS → HTTPS Certificates → **Enable**. `tailscale status --json`
-currently shows `CertDomains: null`, so it's off; without it there's no real
-cert and the phone can't "Add to Home Screen".
+> **Laptop done; phone outstanding.** No code change — this phase is all runtime setup.
+>
+> Done: SPA built; backend restarted on `127.0.0.1:8000` with no `--reload`;
+> `tailscale serve --bg 8000` configured. Verified over HTTPS against a valid
+> Let's Encrypt cert — `/health`, `/`, `/insights` (SPA fallback), the hashed JS
+> bundle, and a bogus `/api/` path correctly 404ing as JSON rather than HTML.
+>
+> Outstanding: the phone is not on this tailnet, so nothing has been opened from it.
+>
+> **Note for Phase 4:** stopping the old `--host 0.0.0.0 --reload` server needed more
+> than killing the uvicorn PIDs — a `multiprocessing` child of the reloader kept the
+> socket open, and `netstat` still attributed `0.0.0.0:8000` to the dead parent. A
+> restart script should kill by port, not by remembered PID.
+
+**HTTPS certificates: already enabled — nothing to do.** This step originally
+called for turning on DNS → HTTPS Certificates in the admin console. That was
+true of the old tailnet, but the tailnet this laptop now belongs to already has
+it on: `tailscale status --json` reports
+`CertDomains: ['unagi.tail53f4fd.ts.net']`. The account also holds
+`https://tailscale.com/cap/is-admin` there, so no permission is needed from the
+tailnet owner either.
 
 Then:
 ```bash
@@ -136,15 +203,17 @@ cd C:/Users/nikil/baby-data-app-2025/backend && .venv/Scripts/python -m uvicorn 
 tailscale serve --bg 8000
 ```
 
-`tailscale serve` proxies `https://unagi.tail94d867.ts.net` → `127.0.0.1:8000`
+`tailscale serve` proxies `https://unagi.tail53f4fd.ts.net` → `127.0.0.1:8000`
 with a Let's Encrypt cert, and the config persists across reboots in the
 tailscaled state — it does not need re-running. Note this replaces the current
 `--host 0.0.0.0 --reload` invocation in `HOW_TO_RUN.md`: binding `0.0.0.0` also
 exposes a **completely unauthenticated CRUD API, DELETE included**, to whatever
-café Wi-Fi you're on. `127.0.0.1` + `tailscale serve` means only your two
-tailnet devices can reach it. `serve` may prompt for elevation on Windows.
+café Wi-Fi you're on. `127.0.0.1` + `tailscale serve` means only devices on the
+tailnet can reach it. `serve` may prompt for elevation on Windows.
 
 ## Phase 4 — Start at boot
+
+> **Not started.** Next up.
 
 Add `scripts/start-app.ps1` to the app repo: `cd` to `backend/`, exec
 `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
@@ -162,6 +231,10 @@ reproducible rather than hand-clicked. Power settings are already favourable:
 on AC the sleep timeout is 0 (never).
 
 ## Phase 5 — Decommission Supabase
+
+> **Not started.** dbt CI is still red on every PR into `main` with
+> `FATAL: (ENOTFOUND) tenant/user not found` — it still targets Supabase. Expected
+> until this phase lands; not worth chasing before then.
 
 **Rework dbt CI** — `.github/workflows/dbt-ci.yml` currently reads real Supabase
 source tables and builds into `ci_pr_<n>` schemas. Replace with a self-contained
@@ -203,6 +276,11 @@ This is a dashboard action for you.
 
 ## Phase 6 — Docs
 
+> **Not started**, beyond this plan's own status. `HOW_TO_RUN.md` in the app repo is
+> now actively wrong: it documents the `--host 0.0.0.0 --reload` invocation that
+> Phase 3 replaced, names the Postgres service `postgresql-x64-16` when it is
+> `-15`, and still carries the database password in cleartext.
+
 - Rewrite `HOW_TO_RUN.md` in the app repo around the two modes: dev
   (`npm run dev` + uvicorn on :8000) and deployed (build + Task Scheduler +
   `tailscale serve`). It currently names service `postgresql-x64-16`; the
@@ -218,22 +296,37 @@ This is a dashboard action for you.
 
 ## Verification
 
-1. `curl http://127.0.0.1:8000/health` → `{"status":"healthy",...}`.
-2. `curl https://unagi.tail94d867.ts.net/health` from the laptop, then
-   `tailscale serve status` shows the proxy.
-3. On the phone: open `https://unagi.tail94d867.ts.net` — valid cert, no
+Marked with what has actually been confirmed as of 2026-08-25.
+
+1. ✅ `curl http://127.0.0.1:8000/health` → `{"status":"healthy",...}`.
+2. ✅ `curl https://unagi.tail53f4fd.ts.net/health` from the laptop, then
+   `tailscale serve status` shows the proxy. **Caveat:** curl on Windows uses
+   schannel, and hitting the node's own tailnet name from that node returns a
+   bare `000` after a valid TLS handshake — intermittently, and for every path
+   including ones that had just worked. It is a local hairpin artifact, not a
+   server fault: the requests never reach uvicorn (nothing appears in its log).
+   Confirm with a different TLS stack instead, e.g.
+   `.venv/Scripts/python -c "import urllib.request;
+   print(urllib.request.urlopen('https://unagi.tail53f4fd.ts.net/health').read())"`,
+   or just test from the phone.
+3. ⬜ **Blocked on the phone joining the tailnet.** Open
+   `https://unagi.tail53f4fd.ts.net` — valid cert, no
    warning. Navigate to Insights and Activity History, then **hard-refresh on
    `/insights`** to prove the SPA fallback works.
-4. Log a feed from the phone, then confirm it landed:
+4. ⬜ **Blocked on the same.** Log a feed from the phone, then confirm it landed:
    `select * from public.feeding_sessions order by created_at desc limit 1;`
    — it should have `source` distinct from `'ingested'`.
-5. Insights renders charts (proves `marts.mart_daily_metrics` is reachable and
-   fresh — a 503 means Phase 2 didn't take).
-6. `cd backend && .venv/Scripts/python -m pytest` — the 89 existing unit tests
-   still pass.
-7. **Reboot the laptop**, wait ~2 min, and hit the URL from the phone without
+5. ✅ Insights renders charts (proves `marts.mart_daily_metrics` is reachable and
+   fresh — a 503 means Phase 2 didn't take). Confirmed in a desktop browser
+   against the running backend: Insights rendered "Today · Imogen at 23w 4d"
+   with 9 feeds, matching `feed_count` for 2026-08-25 in the mart. Not yet
+   confirmed on the phone.
+6. ✅ `cd backend && .venv/Scripts/python -m pytest` — **99 passed** in 16s. (The
+   plan said 89; the suite has grown since it was written.) Confirms Phase 1's
+   static-file mounting and catch-all route did not break the API.
+7. ⬜ Needs Phase 4 first. **Reboot the laptop**, wait ~2 min, and hit the URL from the phone without
    touching the laptop.
-8. Open a throwaway PR in the dbt repo and confirm the reworked CI goes green
+8. ⬜ Needs Phase 5 first. Open a throwaway PR in the dbt repo and confirm the reworked CI goes green
    with no secrets configured.
 
 ## Risks
