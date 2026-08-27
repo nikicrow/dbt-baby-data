@@ -8,7 +8,7 @@
 | 2 — Refresh local data | **Done** | dbt repo [#15](https://github.com/nikicrow/dbt-baby-data/pull/15) |
 | 3 — Build and run under Tailscale | **Done**, on `fedora-1` rather than the laptop | no code change |
 | 4 — Start at boot | **Abandoned — superseded** by the move to `fedora-1` | n/a |
-| 5 — Decommission Supabase | **Done** (repo side); two dashboard actions outstanding | this PR |
+| 5 — Decommission Supabase | **Done**, CI green on the runner; two dashboard actions outstanding | dbt repo [#17](https://github.com/nikicrow/dbt-baby-data/pull/17) |
 | 6 — Docs | Not started, and bigger than described below | |
 
 > ### ⚠️ The host changed: this plan describes the wrong machine
@@ -255,12 +255,12 @@ on AC the sleep timeout is 0 (never).
 
 ## Phase 5 — Decommission Supabase
 
-> **Done in the repo, 2026-08-27.** CI is now self-contained: a `postgres:17`
-> service container (matching `fedora-1`'s 17.10), the schema replayed from the
-> new `ci/source_schema.sql`, the committed seeds loaded by `run_pipeline.py`,
-> then `dbt build --target ci`. **No repo secrets are needed any more.** The
-> whole job was rehearsed locally against a scratch database built from nothing
-> but that snapshot and the seeds: `PASS=43 WARN=0 ERROR=0`.
+> **Done in the repo, 2026-08-27** — [#17](https://github.com/nikicrow/dbt-baby-data/pull/17).
+> CI is now self-contained: a `postgres:17` service container (matching
+> `fedora-1`'s 17.10), the schema replayed from the new `ci/source_schema.sql`,
+> the committed seeds loaded by `run_pipeline.py`, then `dbt build --target ci`.
+> **No repo secrets are needed any more** — verified on the runner, green in
+> 47s with all five secrets still unused: `PASS=43 WARN=0 ERROR=0`.
 >
 > Supabase is gone from the code: `SupabaseConfig` and every `--target supabase`
 > removed, `.env.example` and `sources.yml` cleaned up, README's CI section
@@ -380,12 +380,12 @@ Marked with what has actually been confirmed as of 2026-08-25.
    static-file mounting and catch-all route did not break the API.
 7. ⬜ Needs Phase 4 first. **Reboot the laptop**, wait ~2 min, and hit the URL from the phone without
    touching the laptop.
-8. 🟡 **Rehearsed locally, not yet observed on a runner.** The full CI sequence
-   was run against a scratch Postgres built only from `ci/source_schema.sql`
-   plus the committed seeds — schema replay clean, 9764 rows loaded,
-   `dbt build` **PASS=43 WARN=0 ERROR=0**. What that does *not* prove is the
-   GitHub Actions half: the service container, `psql` on the runner, and
-   `uv sync --frozen`. The PR that lands Phase 5 is itself the test.
+8. ✅ **Confirmed on a runner**, by the Phase 5 PR itself
+   ([#17](https://github.com/nikicrow/dbt-baby-data/pull/17)): the reworked CI
+   went green in 47s **with no secrets configured** — 9764 rows loaded into the
+   `postgres:17` service container, `dbt build` **PASS=43 WARN=0 ERROR=0**.
+   Rehearsed locally first against a scratch database built only from
+   `ci/source_schema.sql` plus the committed seeds, with identical results.
 
 ## Risks
 
