@@ -16,7 +16,7 @@ csv export (zip)  ─┐
           seeds/*.csv  →  transform_seeds.py  →  transformed_data/*.csv
                     │
                     ▼
-           load_to_database.py            load into Postgres/Supabase
+           load_to_database.py            load into Postgres
                     │
                     ▼
               raw.raw_*                   dbt sources (models/raw)
@@ -35,8 +35,7 @@ Two entry points for getting data in:
 
 - **`python scripts/ingest.py`** — the normal path. Finds the latest
   `csv*.zip` export in `~/Downloads`, extracts it into `seeds/`, transforms
-  it, and loads it to the database. Use `--zip <path>` for a specific file,
-  `--target supabase` to load into Supabase instead of local Postgres, and
+  it, and loads it to the database. Use `--zip <path>` for a specific file and
   `--skip-load` to transform without touching the database.
 - **`python scripts/run_pipeline.py`** — transform + load without the
   zip/extract step, for when `seeds/` is already populated. Supports
@@ -81,9 +80,13 @@ uv sync
 cp baby_data/scripts/.env.example baby_data/scripts/.env   # fill in DB credentials
 ```
 
-Requires Python 3.11+ and a Postgres database (local or Supabase) — see
-`scripts/.env.example` for the connection variables. dbt profile name is
-`baby_data`.
+Requires Python 3.11+ and a Postgres database — see `scripts/.env.example`
+for the connection variables. dbt profile name is `baby_data`.
+
+Run everything through `uv run`. Bare `python` on PATH may be a system
+interpreter rather than the project `.venv`, in which case the load step dies
+with `pydantic-settings not installed` — after the transform has already
+rewritten `seeds/`.
 
 ## Running dbt
 
@@ -93,31 +96,41 @@ directly into the `raw_*` tables that `models/raw` reads as sources.
 
 ```bash
 cd baby_data
-dbt deps          # install dbt-labs/codegen
-dbt run
-dbt test
+uv run dbt deps          # install dbt-labs/codegen
+uv run dbt run
+uv run dbt test
 ```
 
-Against Supabase, override the source database with `DBT_SOURCE_DATABASE=postgres`
-and use `--target supabase`. The source schema stays `public` (the default) —
-that's where the app's Alembic migrations create its tables, on Supabase and
-locally alike.
+The source database and schema default to `baby_data` / `public` — where
+`load_to_database.py` writes and where the app's Alembic migrations create its
+tables. `DBT_SOURCE_DATABASE` and `DBT_SOURCE_SCHEMA` override them if you need
+to point at a scratch copy.
 
 ## CI
 
-`.github/workflows/dbt-ci.yml` runs `dbt build` on every PR into `main`. It
-reads the real source tables in Supabase and builds the models into a
-throwaway `ci_pr_<n>` schema (marts land in `ci_pr_<n>_marts`, see
-`macros/generate_schema_name.sql`), then drops both schemas afterwards. If the
-tests fail, the PR check goes red.
+`.github/workflows/dbt-ci.yml` runs `dbt build` on every PR into `main`. **It
+needs no repo secrets** — the job is entirely self-contained:
+
+1. Starts an empty `postgres:17` service container named `baby_data`, matching
+   the major version of the real database.
+2. Replays `ci/source_schema.sql` into it to create the six source tables and
+   the enum types they depend on. This step exists because
+   `scripts/load_to_database.py` only ever `INSERT`s — it aborts if a table is
+   missing and never issues DDL.
+3. Runs `scripts/run_pipeline.py`, which transforms the committed `seeds/` CSVs
+   and loads them.
+4. Runs `dbt deps` and `dbt build --target ci`. If any test fails, the PR check
+   goes red.
+
+The container is thrown away with the runner, so nothing needs cleaning up
+afterwards.
 
 CI uses its own profile at `ci/profiles.yml`, kept out of `baby_data/` so it
-doesn't shadow your local `~/.dbt/profiles.yml`. It needs these repo secrets:
+doesn't shadow your local `~/.dbt/profiles.yml`. Every value there defaults to
+the service container, and `CI_DB_*` env vars override them if you want to
+reproduce a CI run against a local scratch database.
 
-| Secret | Value |
-|---|---|
-| `SUPABASE_DB_HOST` | Session pooler host, **not** `db.<ref>.supabase.co` — the direct host is IPv6-only and GitHub runners are IPv4-only |
-| `SUPABASE_DB_PORT` | `5432` |
-| `SUPABASE_DB_NAME` | `postgres` |
-| `SUPABASE_DB_USER` | Pooler user, e.g. `postgres.<project-ref>` |
-| `SUPABASE_DB_PASSWORD` | Database password |
+> **`ci/source_schema.sql` is a point-in-time snapshot, currently Alembic head
+> `e7a91b4c2d58`.** Regenerate it whenever a migration lands in the app repo,
+> or CI will quietly stop testing the real schema. Instructions are in the
+> file's header.

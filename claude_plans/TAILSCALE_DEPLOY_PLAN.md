@@ -1,24 +1,44 @@
 # Deploying the Baby App on Tailscale, on Local Postgres
 
-## Status — 2026-08-25
+## Status — 2026-08-27
 
 | Phase | State | Landed in |
 |---|---|---|
 | 1 — Serve the SPA from FastAPI | **Done** | app repo [#18](https://github.com/nikicrow/baby-data-app-2025/pull/18) |
 | 2 — Refresh local data | **Done** | dbt repo [#15](https://github.com/nikicrow/dbt-baby-data/pull/15) |
-| 3 — Build and run under Tailscale | **Laptop done; phone outstanding** | no code change |
-| 4 — Start at boot | Not started | |
-| 5 — Decommission Supabase | Not started | |
-| 6 — Docs | Not started | |
+| 3 — Build and run under Tailscale | **Done**, on `fedora-1` rather than the laptop | no code change |
+| 4 — Start at boot | **Abandoned — superseded** by the move to `fedora-1` | n/a |
+| 5 — Decommission Supabase | **Done** (repo side); two dashboard actions outstanding | this PR |
+| 6 — Docs | Not started, and bigger than described below | |
 
-**The one thing blocking a full end-to-end test:** the phone (`pixel-8-pro`) is
-still on the old tailnet. Everything on the laptop is built, running, and
-verified over HTTPS — but nothing has been opened from the phone yet, so
-verification steps 3, 4 and 7 below are untested.
+> ### ⚠️ The host changed: this plan describes the wrong machine
+>
+> Everything below Phase 3 was written assuming the app runs on the **laptop**
+> (`unagi`). It does not. The app and its Postgres now run on **`fedora-1`**, a
+> Fedora box in the study, at **`https://fedora-1.tail53f4fd.ts.net:8444`** —
+> same tailnet, LAN address `192.168.1.126`, Postgres 17.10 listening on
+> localhost only.
+>
+> Consequences, none of which the prose below reflects:
+>
+> - **The laptop is decommissioned as a host.** Its `tailscale serve` config is
+>   removed and uvicorn is stopped. Its Postgres still runs, holding a stale
+>   copy frozen ~2026-08-25, kept deliberately as a rollback.
+> - **`~/.dbt/profiles.yml` on the laptop is deliberately broken.** The `local`
+>   target is renamed `laptop_stale_rollback` with **no default target**, so a
+>   bare `dbt run` fails rather than silently rebuilding the stale database.
+>   That is intentional; do not "fix" it by restoring a default. Backup at
+>   `~/.dbt/profiles.yml.bak`.
+> - **Phase 4 (Task Scheduler at boot) is dead.** An always-on server made it
+>   unnecessary. It was never started, and should not be.
+> - Every `unagi.tail53f4fd.ts.net` URL below should read
+>   `fedora-1.tail53f4fd.ts.net:8444`.
+>
+> Rewriting the prose for `fedora-1` belongs to Phase 6, not here.
 
 ## Context
 
-The previous direction ([APP_CUTOVER_PLAN.md](APP_CUTOVER_PLAN.md)) was to move the
+The previous direction ([APP_CUTOVER_PLAN.md](closed/APP_CUTOVER_PLAN.md)) was to move the
 app onto Supabase and deploy frontend + backend to Vercel. Tailscale makes a
 cloud host unnecessary: the app can run on the laptop and be reachable from the
 phone over the tailnet. That removes Supabase, Vercel, connection poolers,
@@ -213,7 +233,10 @@ tailnet can reach it. `serve` may prompt for elevation on Windows.
 
 ## Phase 4 — Start at boot
 
-> **Not started.** Next up.
+> **Abandoned — superseded, 2026-08-27.** Never started, and now unnecessary:
+> the app moved off the laptop onto `fedora-1`, which is always on and starts
+> its own services. Windows Task Scheduler has no part to play. The section
+> below is kept only as the record of what was planned.
 
 Add `scripts/start-app.ps1` to the app repo: `cd` to `backend/`, exec
 `.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000`
@@ -232,9 +255,32 @@ on AC the sleep timeout is 0 (never).
 
 ## Phase 5 — Decommission Supabase
 
-> **Not started.** dbt CI is still red on every PR into `main` with
-> `FATAL: (ENOTFOUND) tenant/user not found` — it still targets Supabase. Expected
-> until this phase lands; not worth chasing before then.
+> **Done in the repo, 2026-08-27.** CI is now self-contained: a `postgres:17`
+> service container (matching `fedora-1`'s 17.10), the schema replayed from the
+> new `ci/source_schema.sql`, the committed seeds loaded by `run_pipeline.py`,
+> then `dbt build --target ci`. **No repo secrets are needed any more.** The
+> whole job was rehearsed locally against a scratch database built from nothing
+> but that snapshot and the seeds: `PASS=43 WARN=0 ERROR=0`.
+>
+> Supabase is gone from the code: `SupabaseConfig` and every `--target supabase`
+> removed, `.env.example` and `sources.yml` cleaned up, README's CI section
+> rewritten, `supabase/migrations/` deleted, and both Supabase-era plans moved
+> to `closed/`.
+>
+> **Two dashboard actions remain, and only you can do them:** delete the five
+> `SUPABASE_DB_*` repo secrets, and **pause** (not delete) project
+> `ffbvvcrynewjnafycrnx` — delete only after CI has been green for a week.
+>
+> **Known gap — the seeds CI depends on will drift.** CI loads the committed
+> `seeds/` CSVs. Once ingestion runs on `fedora-1` against emailed exports, the
+> seeds change *there* and diverge from git unless something pushes them. CI
+> would then keep testing progressively staler data while passing. Either the
+> server commits and pushes `seeds/` after each ingest, or CI switches to a
+> small fixture. Flagged, not yet decided.
+>
+> One item from the original list was **not** done: `~/.dbt/profiles.yml` is a
+> machine-local file outside this repo, so its dead `supabase` output cannot be
+> removed by a PR. See the note under that bullet.
 
 **Rework dbt CI** — `.github/workflows/dbt-ci.yml` currently reads real Supabase
 source tables and builds into `ci_pr_<n>` schemas. Replace with a self-contained
@@ -255,7 +301,10 @@ job:
   this; delete the five `SUPABASE_DB_*` secrets in GitHub settings.
 
 **Strip Supabase from the dbt repo:**
-- `~/.dbt/profiles.yml` — delete the `supabase` output.
+- `~/.dbt/profiles.yml` — delete the `supabase` output. *Not done by this PR:
+  the file is machine-local and untracked. Its `supabase` output is inert (it
+  interpolates `SUPABASE_DB_*` env vars that are no longer set anywhere), but
+  it is worth deleting by hand next time you edit that file.*
 - `baby_data/scripts/load_to_database.py` — remove the `SupabaseConfig` class
   and the `supabase` choice from `--target`; likewise `ingest.py`. Leaving it in
   is a footgun pointed at a dead project.
@@ -276,10 +325,15 @@ This is a dashboard action for you.
 
 ## Phase 6 — Docs
 
-> **Not started**, beyond this plan's own status. `HOW_TO_RUN.md` in the app repo is
-> now actively wrong: it documents the `--host 0.0.0.0 --reload` invocation that
-> Phase 3 replaced, names the Postgres service `postgresql-x64-16` when it is
-> `-15`, and still carries the database password in cleartext.
+> **Not started, and larger than this section describes.** `HOW_TO_RUN.md` in the
+> app repo is now wrong in more ways than when this was written: it documents the
+> `--host 0.0.0.0 --reload` invocation that Phase 3 replaced, names the Postgres
+> service `postgresql-x64-16` when the laptop's is `-15` — and the whole
+> Windows-service framing is moot anyway, because the app runs on `fedora-1`
+> now. It is not a correction any more; it is a rewrite for a different machine.
+>
+> **It also still contains the database password in cleartext while tracked in
+> git.** That is the urgent part, and it is independent of the rewrite.
 
 - Rewrite `HOW_TO_RUN.md` in the app repo around the two modes: dev
   (`npm run dev` + uvicorn on :8000) and deployed (build + Task Scheduler +
@@ -326,8 +380,12 @@ Marked with what has actually been confirmed as of 2026-08-25.
    static-file mounting and catch-all route did not break the API.
 7. ⬜ Needs Phase 4 first. **Reboot the laptop**, wait ~2 min, and hit the URL from the phone without
    touching the laptop.
-8. ⬜ Needs Phase 5 first. Open a throwaway PR in the dbt repo and confirm the reworked CI goes green
-   with no secrets configured.
+8. 🟡 **Rehearsed locally, not yet observed on a runner.** The full CI sequence
+   was run against a scratch Postgres built only from `ci/source_schema.sql`
+   plus the committed seeds — schema replay clean, 9764 rows loaded,
+   `dbt build` **PASS=43 WARN=0 ERROR=0**. What that does *not* prove is the
+   GitHub Actions half: the service container, `psql` on the runner, and
+   `uv sync --frozen`. The PR that lands Phase 5 is itself the test.
 
 ## Risks
 

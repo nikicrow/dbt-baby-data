@@ -1,5 +1,7 @@
 # Supabase CI Plan
 
+> **Closed, superseded 2026-08-27.** The Supabase-backed CI described here was replaced by a self-contained ephemeral-Postgres job in Phase 5 of [TAILSCALE_DEPLOY_PLAN.md](../TAILSCALE_DEPLOY_PLAN.md); its five `SUPABASE_DB_*` repo secrets are gone and its follow-ups (RLS hardening, app connection cutover) died with the project. Kept as the record of how the Supabase project was built.
+
 ## Goal
 
 Run `dbt build` against a test schema on every PR into `main`, so failing dbt
