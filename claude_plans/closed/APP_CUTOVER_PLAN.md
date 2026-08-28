@@ -1,5 +1,7 @@
 # App Connection Cutover to Supabase — Scoping Plan
 
+> **Closed, superseded 2026-08-27.** Tailscale replaced this direction entirely — the app runs on `fedora-1` over the tailnet against local Postgres, so there is no Supabase or Vercel to cut over to. See [TAILSCALE_DEPLOY_PLAN.md](../TAILSCALE_DEPLOY_PLAN.md).
+
 ## Goal
 
 Make Supabase the **real production database** for the app

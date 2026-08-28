@@ -5,22 +5,13 @@ Loads transformed CSV data directly into the PostgreSQL database.
 Reads from transformed_data/ and inserts into the configured schema.
 
 Usage:
-    # Local (default):
     python load_to_database.py
-
-    # Supabase:
-    python load_to_database.py --target supabase
 
     # Force reload without prompt:
     python load_to_database.py --force
-    python load_to_database.py --target supabase --force
 
-Environment variables (local target):
-    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSLMODE
-
-Environment variables (supabase target):
-    SUPABASE_DB_HOST, SUPABASE_DB_PORT, SUPABASE_DB_NAME,
-    SUPABASE_DB_USER, SUPABASE_DB_PASSWORD
+Environment variables:
+    DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD, DB_SSLMODE, DB_SCHEMA
 """
 
 import argparse
@@ -55,7 +46,11 @@ PIPELINE_SOURCE = "ingested"
 
 
 class DatabaseConfig(BaseSettings):
-    """Shared connection settings; subclasses set the env var prefix and target-specific defaults."""
+    """Connection settings, read from DB_* env vars or the sibling .env file.
+
+    Env vars win over .env, which is how CI supplies the throwaway Postgres
+    service container's credentials without writing an .env at all.
+    """
 
     host: str = "localhost"
     port: int = 5432
@@ -65,37 +60,14 @@ class DatabaseConfig(BaseSettings):
     sslmode: str = "disable"
     schema: str = "public"
 
-    # extra="ignore": the shared .env holds both the DB_* and SUPABASE_DB_*
-    # blocks, so whichever config is loading must ignore the other prefix's
-    # keys rather than rejecting them as unexpected extras.
-    model_config = {"env_file": str(ENV_FILE), "extra": "ignore"}
-
-
-class LocalDatabaseConfig(DatabaseConfig):
-    model_config = {"env_prefix": "DB_"}
-
-
-class SupabaseDatabaseConfig(DatabaseConfig):
-    host: str
-    name: str = "postgres"
-    password: str
-    sslmode: str = "require"
-    # The app's Alembic migrations create its tables in public, same as local.
-    schema: str = "public"
-
-    model_config = {"env_prefix": "SUPABASE_DB_"}
-
-
-def get_config(target: str) -> DatabaseConfig:
-    if target == "supabase":
-        return SupabaseDatabaseConfig()
-    return LocalDatabaseConfig()
+    # extra="ignore": the .env may carry unrelated keys; ignore them rather
+    # than rejecting them as unexpected extras.
+    model_config = {"env_prefix": "DB_", "env_file": str(ENV_FILE), "extra": "ignore"}
 
 
 def get_connection_string(config: DatabaseConfig) -> str:
     # Percent-encode credentials so a password (or user) containing URL-special
-    # characters like @ : / ? # can't corrupt the connection URI. Supabase
-    # database passwords often include such characters.
+    # characters like @ : / ? # can't corrupt the connection URI.
     user = quote(config.user, safe="")
     password = quote(config.password, safe="")
     return (
@@ -212,8 +184,6 @@ def clear_ingested_rows(conn, table_name: str, schema: str) -> int:
 def main():
     """Load all transformed data into the database."""
     parser = argparse.ArgumentParser(description='Load transformed data into PostgreSQL')
-    parser.add_argument('--target', choices=['local', 'supabase'], default='local',
-                        help='Database target (default: local)')
     parser.add_argument('--force', '-f', action='store_true',
                         help='Clear existing data without prompting')
     args = parser.parse_args()
@@ -221,7 +191,6 @@ def main():
     print("=" * 60)
     print("Database Load Script")
     print("=" * 60)
-    print(f"Target: {args.target}")
     print(f"Data source: {DATA_DIR}")
     print()
 
@@ -231,7 +200,7 @@ def main():
         print("Run transform_seeds.py first to generate the data.")
         sys.exit(1)
 
-    config = get_config(args.target)
+    config = DatabaseConfig()
     schema = config.schema
     conn_str = get_connection_string(config)
 

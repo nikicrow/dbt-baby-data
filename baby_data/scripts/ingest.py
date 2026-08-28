@@ -11,15 +11,14 @@ Usage:
     # Use a specific zip file:
     python ingest.py --zip "C:/Users/nikil/Downloads/csv (3).zip"
 
-    # Load into Supabase instead of local Postgres:
-    python ingest.py --target supabase
-
     # Transform only (skip database load — useful for testing):
     python ingest.py --skip-load
 
     # Combine flags:
     python ingest.py --zip myfile.zip --skip-load
-    python ingest.py --zip myfile.zip --target supabase
+
+The load step connects to whatever the DB_* environment variables (or
+scripts/.env) point at — see load_to_database.py.
 """
 
 import argparse
@@ -112,12 +111,6 @@ def main() -> None:
         action="store_true",
         help="Run transform only — skip the database load step.",
     )
-    parser.add_argument(
-        "--target",
-        choices=["local", "supabase"],
-        default="local",
-        help="Database target for the load step (default: local).",
-    )
     args = parser.parse_args()
 
     print("=" * 60)
@@ -174,12 +167,12 @@ def main() -> None:
         return
 
     print()
-    print(f"--- Step 3/3: Load (target: {args.target}) ---")
-    run_script("load_to_database.py", ["--target", args.target, "--force"])
+    print("--- Step 3/3: Load ---")
+    run_script("load_to_database.py", ["--force"])
 
     print()
     print("=" * 60)
-    print(f"Ingest complete! Database fully refreshed (target: {args.target}).")
+    print("Ingest complete! Database fully refreshed.")
     print("=" * 60)
 
 

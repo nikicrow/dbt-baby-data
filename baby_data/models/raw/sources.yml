@@ -2,8 +2,9 @@ version: 2
 
 sources:
   - name: baby_app
-    # Local: database baby_data, schema public (where load_to_database.py writes).
-    # Supabase: override via DBT_SOURCE_DATABASE=postgres, DBT_SOURCE_SCHEMA=baby_data.
+    # Defaults to database baby_data, schema public — where load_to_database.py
+    # writes, on the server and on a developer machine alike. CI overrides
+    # neither: its Postgres container is named baby_data for exactly that reason.
     database: "{{ env_var('DBT_SOURCE_DATABASE', 'baby_data') }}"
     schema: "{{ env_var('DBT_SOURCE_SCHEMA', 'public') }}"
     tables:

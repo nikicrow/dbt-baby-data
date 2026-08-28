@@ -4,27 +4,55 @@ on:
   pull_request:
     branches: [main]
 
-# One CI build per PR; a new push cancels the in-flight run so two builds
-# never share the same ci_pr_<n> schema.
+# One CI build per PR; a new push cancels the in-flight run rather than paying
+# for a superseded one.
 concurrency:
   group: dbt-ci-${{ github.event.pull_request.number }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: dbt build (test schema)
+    name: dbt build (ephemeral postgres)
     runs-on: ubuntu-latest
+
+    # The whole job is self-contained: an empty Postgres is started here, the
+    # schema is replayed into it from ci/source_schema.sql, the committed seed
+    # CSVs are loaded, and dbt builds on top. Nothing reaches outside the
+    # runner, so this workflow needs no repo secrets at all.
+    services:
+      postgres:
+        # Pinned to match the authoritative database on fedora-1 (17.10), so CI
+        # tests against the same major version the app actually runs on. Bump
+        # this when that server is upgraded.
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          # Named baby_data so the defaults in ci/profiles.yml and the
+          # `database:` default in baby_data/models/raw/sources.yml both resolve
+          # without any override.
+          POSTGRES_DB: baby_data
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d baby_data"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
-      SUPABASE_DB_HOST: ${{ secrets.SUPABASE_DB_HOST }}
-      SUPABASE_DB_PORT: ${{ secrets.SUPABASE_DB_PORT }}
-      SUPABASE_DB_NAME: ${{ secrets.SUPABASE_DB_NAME }}
-      SUPABASE_DB_USER: ${{ secrets.SUPABASE_DB_USER }}
-      SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-      # Sources are the app's Alembic-managed tables, which live in Supabase's
-      # public schema. Models are built into a throwaway per-PR schema.
-      DBT_SOURCE_DATABASE: postgres
-      DBT_SOURCE_SCHEMA: public
-      DBT_TARGET_SCHEMA: ci_pr_${{ github.event.pull_request.number }}
+      # Read by load_to_database.py (DatabaseConfig, env_prefix DB_). Its
+      # .env file does not exist on a runner; these env vars stand in for it.
+      DB_HOST: localhost
+      DB_PORT: 5432
+      DB_NAME: baby_data
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_SSLMODE: disable
+      DB_SCHEMA: public
+      # For psql below. ci/profiles.yml already defaults to this container, so
+      # no CI_DB_* overrides are set.
+      PGPASSWORD: postgres
 
     steps:
       - uses: actions/checkout@v4
@@ -35,6 +63,17 @@ jobs:
 
       - name: Install dependencies
         run: uv sync --frozen
+
+      # load_to_database.py only ever INSERTs — it aborts if a table is missing
+      # and never issues DDL — so the source tables have to exist first.
+      - name: Create source tables
+        run: |
+          psql -v ON_ERROR_STOP=1 -h localhost -U postgres -d baby_data \
+            -f ci/source_schema.sql
+
+      # Transforms the committed seeds/ CSVs and loads them into public.*.
+      - name: Load seed data
+        run: uv run python baby_data/scripts/run_pipeline.py
 
       - name: dbt deps
         working-directory: baby_data
@@ -49,13 +88,3 @@ jobs:
           --target ci
           --profiles-dir ../ci
           --exclude resource_type:seed
-
-      # Runs even when the build fails, so a red PR doesn't leave schemas behind.
-      - name: Drop CI schemas
-        if: always()
-        env:
-          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
-        run: |
-          psql "sslmode=require host=$SUPABASE_DB_HOST port=${SUPABASE_DB_PORT:-5432} dbname=${SUPABASE_DB_NAME:-postgres} user=$SUPABASE_DB_USER" \
-            -c "DROP SCHEMA IF EXISTS \"$DBT_TARGET_SCHEMA\" CASCADE;" \
-            -c "DROP SCHEMA IF EXISTS \"${DBT_TARGET_SCHEMA}_marts\" CASCADE;"
