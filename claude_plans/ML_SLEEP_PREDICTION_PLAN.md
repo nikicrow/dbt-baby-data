@@ -1,6 +1,7 @@
 # ML Sleep Prediction — Feature & Label Layer
 
-**Status: DRAFT — awaiting your approval. No code written yet.**
+**Status: DRAFT, round 2 — your PR #18 comments applied (§8 maps each one).
+Still no code written.**
 
 Goal: predict, at any moment when the baby is awake, whether she will fall
 asleep in the next 30 minutes (and separately, the next 60). This document
@@ -77,23 +78,20 @@ rate.
 These are the five choices that shape everything else. I've made a
 recommendation on each; overrule any of them.
 
-### 1.1 "Asleep in the next 30 minutes" means *sleep onset*, not *state at t+30*
+### 1.1 "Asleep in the next 30 minutes" means *sleep onset* — **settled, onset-based**
 
-There are two readings of the label and they are genuinely different:
+`is_asleep_30_mins` = 1 if a sleep session **starts** at any point in the
+window `(t, t+30min]`. Same for 60. That's it — the state-based alternative
+(is she asleep at exactly t+30) is dropped, not carried as a spare column.
 
-- **Onset-based** (recommended): 1 if a sleep session *starts* at any point in
-  the window `(t, t+30min]`.
-- **State-based**: 1 if she is asleep *at exactly* `t + 30min`.
+The two definitions disagree whenever she falls asleep at t+5 and wakes at
+t+25: onset says 1, state says 0. Onset is the right one because it matches
+the question you'd actually ask: *"is it worth starting to settle her now?"*
+A 20-minute catnap starting in 5 minutes is still a yes.
 
-They disagree whenever she falls asleep at t+5 and wakes at t+25 — onset says
-1, state says 0. I recommend onset because it matches the question you'd
-actually ask the model: *"is it worth starting to settle her right now?"* A
-20-minute catnap that starts in 5 minutes is still a yes.
-
-Both are cheap to compute, so the label table will carry **both**, with the
-onset version as the primary `is_asleep_30_mins` / `is_asleep_60_mins` and the
-state version as `is_asleep_at_30_mins` / `is_asleep_at_60_mins` for
-comparison. Costs us two integer columns.
+`minutes_to_next_sleep` stays in the table regardless. It's the raw
+time-to-event number both labels derive from, so any future label variant —
+45 minutes, 90 minutes — is a `case when` away without rebuilding anything.
 
 ### 1.2 Use a regular 10-minute grid, not random times
 
@@ -124,37 +122,59 @@ consequences: grouped splitting is mandatory (§1.3), and any confidence
 interval computed as if we had 28k independent rows will be far too narrow.
 I'll re-run the headline metrics on a 30-minute grid as a sanity check.
 
-### 1.3 Split by **day**, never by row
+### 1.3 Split forward in time; never split by row
 
 This is the single most important decision in the document. If we split rows
 randomly, the row at 14:30 lands in train and the row at 14:40 lands in test,
 and they are near-identical — the model looks brilliant and generalises to
 nothing.
 
-I propose three splits, all defined as columns on the label table so every
-model family uses byte-identical data:
+Two splits, both defined as columns on the label table so every model family
+uses byte-identical data:
 
 | Column | How | What it answers |
 |---|---|---|
-| `split_random_day` | `train` / `val` / `test` = 70/15/15, assigned per `(baby_id, calendar_date)` by `md5()` hash | Standard benchmark. Grouped by day so no window straddles the boundary. |
-| `split_forward_time` | Last 20 % of each baby's calendar range = `test` | Honest answer to "does a model fit on old data still work next month?" — which is the real production setting. Also catches age-drift overfitting. |
-| `split_holdout_baby` | Ember = `train`, Imogen = `test` (and the reverse, as `split_holdout_baby_rev`) | The question that actually matters: **does this work for a baby it has never seen?** Expect the metrics here to be meaningfully worse than the other two. |
+| **`split_forward_time`** | **Primary.** Per baby, chronological: first 70 % of calendar days `train`, next 15 % `val`, last 15 % `test` | "Does a model fit on data up to today still work next week?" |
+| `split_random_day` | 70/15/15 assigned per `(baby_id, calendar_date)` by hash | Secondary benchmark. Grouped by day so no wake window straddles the boundary. Optimistic by comparison — useful mainly as the ceiling |
 
-Report all three. If `split_random_day` looks great and `split_holdout_baby`
-looks like the base rate, we've built a Ember-and-Imogen memoriser, and better
-to know that early.
+**Why forward-in-time is primary** — this changed after your "we won't have any
+more babies" note, and it's the right change. With the roster closed at two,
+the model is never going to meet a stranger. Ember's data is finished and
+historical (it stops at 12 months, two years ago). The only live use is
+**predicting for Imogen, going forward from today.** That is literally a
+forward-in-time problem, so the split that mimics deployment should be the one
+we judge on. A random-day split would let the model train on next Tuesday to
+predict last Monday, which is not a thing it will ever get to do.
 
-A test set is only a test set if it stays sealed. The plan is to run the whole
-model bake-off against `val`, and touch `test` exactly once at the end.
+Test-set discipline: run the whole model bake-off against `val`, touch `test`
+exactly once at the end.
 
-### 1.4 Never put `baby_name` (or calendar date) into the model
+**Dropped: the leave-one-baby-out split.** Per your note, not worth two schema
+columns for two babies. Worth recording why it's no loss: "train on Ember,
+test on Imogen" is one line of pandas (`df[df.baby_name == 'Ember']`) whenever
+we're curious. The question it answers is no longer "will this generalise to a
+stranger" but "is Ember's data actually helping predict Imogen, or is it just
+noise from a different baby two years ago?" — which is worth 20 minutes at
+model time, as an experiment rather than a schema commitment.
 
-`baby_name` is in the table for grouping and splitting. Feeding it to the model
-guarantees it can't generalise to a third baby. Same for raw calendar date: with
-one baby per era, "October 2023" *is* "Ember at 8 weeks", so a date feature lets
-the model identify the baby through the back door and silently defeats the
-leave-one-baby-out split. `age_days` is legitimate and stays; `metric_date` does
-not.
+### 1.4 Keep calendar date out of the model; test `baby_name` both ways
+
+Raw calendar date must stay out. With one baby per era, "October 2023" *is*
+"Ember at 8 weeks", so a date feature lets the model identify both the baby and
+her exact life stage from a single column, and it cannot possibly extrapolate
+to 2026. `age_days` is the legitimate version of that information and stays;
+`metric_date` does not.
+
+**`baby_name` is a more interesting case now the roster is closed.** My
+original reasoning — that it blocks generalising to a third baby — no longer
+applies, since there is no third baby. What it becomes is a per-baby intercept:
+"Imogen naps a bit more readily than Ember did," which is true (33.7 % vs
+27.3 % base rate) and legitimately useful for the one baby we're predicting.
+So: **train with it and without it, and keep whichever wins on `val`.** The
+`FeatureSpec` in phase 2 makes this a one-line toggle. My guess is it barely
+moves the needle, because `age_days` plus the trailing per-baby features
+already carry most of what differs between them — but it's now an empirical
+question rather than a rule.
 
 ### 1.5 The tables live in a new `ml` schema, built by dbt
 
@@ -179,9 +199,13 @@ have exactly the same grain, exactly the same number of rows, and join 1:1 on
 a two-column key. We never build a row we won't use.
 
 ```
-                  fct_sleep_sessions
-                          │
-                          ▼
+       fct_sleep_sessions
+                │
+                ▼
+       fct_sleep_blocks               ← NEW MART (§2.2). Overlapping sleep
+       (continuous asleep intervals)     records merged into continuous
+                │                        asleep intervals. Reusable, not
+                ▼                        ML-specific.
               ml_prediction_points          ← THE SPINE. One row per
               (baby_id, prediction_time,       (baby, awake moment on the
                split_*, sample_bucket)         10-min grid). ~27,800 rows.
@@ -189,7 +213,7 @@ a two-column key. We never build a row we won't use.
         ┌────────────┘        └────────────┐   else is allowed to change it.
         ▼                                  ▼
   ml_sleep_labels                   ml_sleep_features
-  spine + 4 label cols              spine + ~55 feature cols
+  spine + 3 label cols              spine + ~55 feature cols
   ~27,800 rows                      ~27,800 rows
         │                                  │
         └──────────────┬───────────────────┘
@@ -205,8 +229,7 @@ rows by construction.
 
 **Guardrails, as dbt tests:**
 
-- `unique` on the surrogate key `prediction_id` (`baby_id || prediction_time`)
-  in all three tables — proves the grain in each.
+- `unique` on `prediction_id` in all three tables — proves the grain in each.
 - `not_null` on the key columns.
 - A custom test `assert_ml_tables_same_grain.sql`: `ml_sleep_labels`,
   `ml_sleep_features` and `ml_prediction_points` all have identical row counts
@@ -216,14 +239,91 @@ rows by construction.
 - `accepted_values` on `split_*` columns.
 
 **Rough disk cost:** ~27,800 rows × ~60 numeric columns ≈ 13 MB per table,
-under 50 MB for the layer. Rebuild time on Postgres should be seconds. If we
-ever add a third baby at the same tracking density, add ~10k rows. This scales
-to a dozen babies before anyone needs to think about it again.
+under 50 MB for the layer. Rebuild time on Postgres should be seconds. The
+dataset is closed at two babies, so this is the size it will ever be — the
+only growth is Imogen's ongoing logging, roughly 59 rows a day.
 
 **Why not one wide table?** Because the label definitions will change (you may
-want 45 minutes, or the state-based variant) far more often than the features
+want a 45- or 90-minute horizon) far more often than the features
 will, and vice versa. Separating them means a label change doesn't force a
 recompute of 55 feature columns. The joined view costs nothing.
+
+### 2.1 The surrogate key — `dbt_utils.generate_surrogate_key`
+
+Taking your note: the key is built with the package macro rather than by
+hand-concatenating strings.
+
+```sql
+{{ dbt_utils.generate_surrogate_key(['baby_id', 'prediction_time']) }}
+    as prediction_id
+```
+
+It hashes the listed columns into one fixed-width md5 string. Three things it
+gives us over `baby_id || '_' || prediction_time`:
+
+- **Nulls don't collapse.** In Postgres, `'abc' || null` is `null`, so a
+  hand-rolled key silently becomes null if any part is missing, and a `unique`
+  test passes happily because Postgres doesn't compare nulls. The macro coerces
+  each field to a string first, so a missing part produces a real (if odd) key
+  that a `not_null` test will catch.
+- **No separator ambiguity.** Concatenation can collide when values contain the
+  separator. Not a live risk with a uuid and a timestamp, but it's free to not
+  have to think about it.
+- **Fixed width, and consistent with everywhere else** the pattern gets used
+  later.
+
+One housekeeping point: `dbt_utils` 1.3.3 is already resolved in
+`package-lock.yml`, but only as a transitive dependency of `dbt-labs/codegen`
+— it isn't in `packages.yml`. Since we'd now be calling its macros directly,
+it should be declared explicitly, so a future `codegen` bump that drops the
+dependency doesn't break our models:
+
+```yaml
+packages:
+  - package: dbt-labs/codegen
+    version: 0.12.1
+  - package: dbt-labs/dbt_utils      # add — used directly by models/ml
+    version: 1.3.3
+```
+
+### 2.2 `fct_sleep_blocks` — the merge logic, in a reusable layer
+
+Taking your note that this belongs before the features so it can be recycled.
+It becomes **its own mart model, `marts/fct_sleep_blocks.sql`** — not part of
+the ML layer at all.
+
+Putting it in `marts/` rather than `ml/` is deliberate: "when was she actually
+asleep, continuously" is a general question about the data, not an ML concept.
+The ML spine is then just one consumer of it.
+
+**What it does.** `fct_sleep_sessions` has records that overlap — the same
+sleep logged across two entries, 0.5 % of Ember's and 0.2 % of Imogen's. Left
+alone, the seam between two overlapping records looks like a moment of
+wakefulness that never happened. The model collapses any chain of sessions
+where each starts at or before the previous one's end into a single continuous
+block, per baby. The standard SQL for this is the "gaps and islands" pattern:
+flag each row that starts a new island, cumulative-sum the flags into an island
+id, then group by it.
+
+**Grain:** one row per continuous asleep interval per baby. Roughly 1,725 rows
+for Ember and 1,098 for Imogen, down from 1,734 and 1,100 sessions.
+
+**Columns:** `sleep_block_id`, `baby_id`, `baby_name`, `block_start`,
+`block_end`, `block_duration_minutes`, `session_count` (how many raw records
+were merged — 1 for the vast majority), `is_night`, `night_date`, `age_days`,
+`age_weeks`.
+
+**Where else it's immediately useful**, which is the point of pulling it out:
+
+- `fct_wake_windows` currently computes gaps from raw `stg_sleep_sessions`, so
+  it has the same overlap problem — a merged-record seam can produce a spurious
+  short wake window. Rebuilding it on `fct_sleep_blocks` would fix that. **I
+  have not included that change here**, because it would shift numbers the app's
+  Compare tab already displays, and that deserves to be its own decision rather
+  than a side effect of an ML PR. Flagging it as a follow-up.
+- "Longest continuous stretch" questions — the ones you actually care about at
+  4 am — are a `max(block_duration_minutes)` on this table, and are currently
+  slightly wrong anywhere they're computed from raw sessions.
 
 ---
 
@@ -238,27 +338,22 @@ One row per `(baby_id, prediction_time)` where the baby was **awake** at
 
 | Column | Type | Meaning |
 |---|---|---|
-| `prediction_id` | text | `baby_id \|\| '_' \|\| prediction_time` — surrogate key |
+| `prediction_id` | text | `dbt_utils.generate_surrogate_key(['baby_id', 'prediction_time'])` — see §2.1 |
 | `baby_id` | uuid | FK to `raw_baby_profiles` |
-| `baby_name` | text | For grouping/filtering only — **never a feature** |
+| `baby_name` | text | Grouping and splitting. As a *feature* it's an open experiment — §1.4 |
 | `prediction_time` | timestamp | The moment we're standing at, local time |
 | `is_asleep_30_mins` | int 0/1 | **Primary label.** A sleep session starts in `(t, t+30min]` |
 | `is_asleep_60_mins` | int 0/1 | **Primary label.** A sleep session starts in `(t, t+60min]` |
-| `is_asleep_at_30_mins` | int 0/1 | Alternative: she is inside a sleep session at exactly `t+30min` |
-| `is_asleep_at_60_mins` | int 0/1 | Alternative: same at `t+60min` |
 | `minutes_to_next_sleep` | int | Raw time-to-event. Useful for diagnostics and for a survival-model comparison later |
 | `split_random_day` | text | `train` / `val` / `test` |
-| `split_forward_time` | text | `train` / `test` |
-| `split_holdout_baby` | text | `train` / `test` |
-| `split_holdout_baby_rev` | text | `train` / `test` |
+| `split_forward_time` | text | `train` / `val` / `test` — **the primary split** |
 | `sample_bucket` | int 0–99 | Deterministic hash, for reproducible subsampling |
 
 ### 3.3 How it's built
 
-1. **Merge sleep intervals.** `fct_sleep_sessions` has 0.5 % overlapping
-   records (one sleep logged across two entries). Merge any sessions where
-   `start_time <= previous end_time` into one continuous asleep block, per baby.
-   Without this, an overlap creates a spurious "awake" instant.
+1. **Read merged sleep blocks** from `fct_sleep_blocks` (§2.2) — the new mart
+   that collapses overlapping sleep records into continuous asleep intervals.
+   The ML layer consumes it; it doesn't own it.
 2. **Generate the grid.** `generate_series(first_log_date, last_log_date,
    interval '10 minutes')` per baby, via `cross join lateral` off the profile
    table — the same pattern `mart_daily_metrics` already uses for its date spine.
@@ -308,7 +403,7 @@ but trailing aggregates are where this gets subtle, and §4.9 covers the traps.
 | `hour_of_day` | int 0–23 | |
 | `minutes_since_midnight` | int 0–1439 | Finer-grained than the hour |
 | `tod_sin` | float | `sin(2π × minutes_since_midnight / 1440)` |
-| `tod_cos` | float | `cos(...)`. **Needed for logistic regression** — without it, 23:50 and 00:10 are 1,420 units apart instead of 20. Trees don't need it but it costs nothing to carry |
+| `tod_cos` | float | `cos(...)`. Pairs with `tod_sin` — see §4.1.1 |
 | `is_night_hours` | bool | 19:00–07:00, matching `fct_sleep_sessions.is_night` |
 | `day_of_week` | int 0–6 | Picks up parental routine — weekend lie-ins, weekday outings |
 | `is_weekend` | bool | |
@@ -316,6 +411,71 @@ but trailing aggregates are where this gets subtle, and §4.9 covers the traps.
 All timestamps are naive local time (Australia/Sydney) as loaded — no timezone
 conversion needed, but worth asserting rather than assuming, since the profile
 table carries a `timezone` column that nothing currently reads.
+
+#### 4.1.1 Why logistic regression needs `tod_sin` / `tod_cos` — your question
+
+**The short version:** logistic regression can only draw straight lines, and
+time of day is a circle. The sine/cosine pair turns the circle into two
+straight-line-friendly numbers.
+
+**The longer version.** Logistic regression computes one weight per feature and
+adds everything up:
+
+```
+log-odds = w₀ + w₁ × minutes_since_midnight + w₂ × minutes_since_last_wake + …
+```
+
+Note what `w₁` can express: a *constant* effect per minute. One fixed number.
+If `w₁` is positive, later is always sleepier, all day, without limit. If it's
+negative, earlier is always sleepier. That is the only shape available.
+
+Two separate things go wrong with raw `minutes_since_midnight`.
+
+**1. The midnight seam.** The feature runs 0 to 1439 and then jumps back to 0.
+So 23:50 (1430) and 00:10 (10) are 1,420 apart numerically, despite being 20
+minutes apart in reality — and the model has no way to know. Ember's data makes
+the cost concrete: she's roughly equally likely to fall asleep at 23:00 (35 %)
+and 01:00 (43 %), but the model sees those as opposite extremes of the range
+and is forced to give them wildly different predictions.
+
+**2. Sleepiness isn't monotonic anyway.** From the hour-by-hour numbers in §0,
+Ember's likelihood is low at 08:00 (15 %), rises to a bump around 14:00 (34 %),
+drops again at 17:00 (18 %), and peaks overnight (68 % at 05:00). It goes up
+and down. No single straight line fits that, no matter how you number the hours.
+
+**The fix.** Place each time on a clock face and record its x and y coordinates:
+
+```
+tod_sin = sin(2π × minutes_since_midnight / 1440)
+tod_cos = cos(2π × minutes_since_midnight / 1440)
+```
+
+| Time | minutes | `tod_sin` | `tod_cos` |
+|---|---|---|---|
+| 00:00 | 0 | 0.00 | 1.00 |
+| 06:00 | 360 | 1.00 | 0.00 |
+| 12:00 | 720 | 0.00 | −1.00 |
+| 18:00 | 1080 | −1.00 | 0.00 |
+| 23:50 | 1430 | −0.04 | 1.00 |
+
+Look at 23:50 against 00:00 — nearly identical coordinates, which is correct;
+they're 10 minutes apart. The seam is gone, because a circle has no seam. And
+because there are now two features, the weighted sum
+`w₁ × tod_sin + w₂ × tod_cos` can produce a smooth single-peaked curve over the
+day and place the peak anywhere, rather than a straight line. Still one bump
+rather than Ember's two, which is why `is_night_hours` is also in the list as a
+step-change term — but far closer than a line.
+
+**Why the trees don't care.** Random forest, XGBoost and LightGBM split on
+thresholds — "is `minutes_since_midnight` < 420?" — and can stack as many
+splits as they like, so they carve the day into arbitrary blocks and
+reconstruct any shape, seam included. The columns are harmless there; the trees
+will just ignore them if they're not useful.
+
+This is exactly the kind of thing that makes the logistic-regression baseline
+worth running properly rather than as a formality. If LightGBM beats a
+*carelessly encoded* logistic regression, that tells you nothing about the
+models — only that one of them was handed worse features.
 
 *Considered and rejected:* `month`, `season`. With under one year per baby,
 "July" is nearly a unique identifier for a life stage. Straight to overfitting.
@@ -358,11 +518,51 @@ collinear with calendar date within a baby (§1.4).
 | `nap_count_today_so_far` | int | **"So far" is load-bearing** — not the full-day count from `mart_daily_metrics` |
 | `nap_minutes_today_so_far` | int | Same caveat |
 | `avg_nap_minutes_today_so_far` | float | Same caveat |
-| `last_night_sleep_minutes` | int | Total sleep in the night that preceded today |
-| `last_night_longest_stretch_minutes` | int | |
-| `last_night_waking_count` | int | |
+| `last_night_sleep_minutes` | int | Total sleep in the last **completed** night — see §4.4.1 |
+| `last_night_longest_stretch_minutes` | int | Longest single block within that night |
+| `last_night_waking_count` | int | Gaps between sleep blocks within that night |
 | `sleep_debt_24h_minutes` | float | `sleep_minutes_last_24h − (trailing 14-day median of 24h sleep for this baby)`. Negative = under-slept = more likely to crash |
 
+#### 4.4.1 What counts as "night" — answering your question on `last_night_*`
+
+**We reuse the definition this repo already has**, rather than inventing a
+second one. `fct_sleep_sessions` classifies every session with `is_night`:
+
+- starts between **19:00 and 07:00** → night, whatever the duration (so a
+  3 am wake-and-resettle counts toward the night, not as a nap);
+- starts between **18:00 and 19:00** → night only if longer than 3 hours
+  (this exists because Ember's toddler bedtime often crept before 7 pm, but a
+  short evening catnap should stay a nap);
+- everything else → nap.
+
+It also carries `night_date`, which attributes a night to the date it
+**started** — so a 2 am block belongs to the previous calendar date. "The night
+of 1 July" therefore means everything from 7 pm on the 1st through to the
+morning of the 2nd.
+
+Two reasons to reuse rather than redefine: `mart_daily_metrics` already reports
+night sleep on this basis, so if the ML layer used its own definition, the
+model and the app's Compare tab would disagree about the same night. And the
+rule was tuned against these two babies' actual bedtimes.
+
+**The subtlety is "last".** At 10 am, the last completed night is the one that
+ended this morning. At 11 pm, tonight has already begun — but it is *not*
+finished, and its total is exactly the kind of future information §4.9 forbids.
+So the rule is: **`last_night_*` uses the most recent `night_date` whose final
+sleep block ended at or before `t`.** At 11 pm that still points back to last
+night, not tonight. Concretely:
+
+| `prediction_time` | `last_night_*` refers to |
+|---|---|
+| 2 Jul, 10:00 | night of 1 Jul (ended ~06:40 on the 2nd) ✓ |
+| 2 Jul, 18:00 | night of 1 Jul ✓ |
+| 2 Jul, 23:00 | night of 1 Jul ✓ — *not* the in-progress night of 2 Jul |
+| 3 Jul, 05:30 | night of 1 Jul — she is mid-night-waking, and the night of 2 Jul isn't done |
+
+The last row is the awkward one: at 5:30 am the "last night" figure is over a
+day stale. That's the price of not leaking. `sleep_minutes_last_12h` covers the
+recent-past gap for those rows, which is partly why that family of trailing
+windows is in the table.
 ### 4.5 Feeding
 
 | Column | Type | Notes |
@@ -404,12 +604,12 @@ noticed, not when the event happened. These will be noisier than the sleep and
 feed features, and I'd expect modest importance. Cheap enough to include and
 find out.
 
-### 4.7 Identity — carried, not modelled
+### 4.7 Identity
 
 | Column | Type | Notes |
 |---|---|---|
-| `baby_id` | uuid | Join key |
-| `baby_name` | text | Grouping and splitting only. **Excluded from the feature matrix in Python** (§1.4) |
+| `baby_id` | uuid | Join key. Never a feature — it's a uuid, meaningless as a number |
+| `baby_name` | text | Always used for grouping and splitting. Whether it's *also* a feature is the open experiment in §1.4 — a `FeatureSpec` toggle, tested both ways on `val` |
 
 ### 4.8 What we can't build, and what that costs us
 
@@ -485,9 +685,69 @@ left join lateral (
 ) s on true
 ```
 
-This is readable and each family is independently reviewable. At 27,800 spine
-rows against ~2,800 sleeps per baby it should run in seconds, but it is a
-nested loop and it won't stay fast forever. If it drags, the fallback is the
+#### What `left join lateral` is doing — your question
+
+**In one line:** `LATERAL` lets a subquery in the `FROM` clause see the columns
+of the row currently being processed, which a normal subquery cannot.
+
+Compare. This is illegal in Postgres:
+
+```sql
+select p.*, s.end_time
+from ml_prediction_points p
+left join (
+    select end_time from fct_sleep_blocks
+    where baby_id = p.baby_id            -- ✗ ERROR: p is not visible here
+    order by block_end desc limit 1
+) s on true
+```
+
+A plain subquery in `FROM` is evaluated once, standalone, before any joining
+happens. It has no idea `p` exists. Add the word `lateral` and that changes:
+
+```sql
+left join lateral (
+    select end_time from fct_sleep_blocks
+    where baby_id = p.baby_id            -- ✓ now legal
+      and block_end <= p.prediction_time
+    order by block_end desc limit 1
+) s on true
+```
+
+Now the subquery runs **once per row of `p`**, with that row's values
+substituted in. Conceptually it's a `for` loop:
+
+```python
+for p_row in prediction_points:          # 27,800 times
+    s = (sleep_blocks
+         .filter(baby_id == p_row.baby_id, block_end <= p_row.prediction_time)
+         .sort(block_end, desc=True)
+         .first())                       # or None
+    yield {**p_row, "end_time": s.end_time if s else None}
+```
+
+Three details worth knowing:
+
+- **`on true`** — a normal join needs a condition, but the correlation is
+  already expressed inside the subquery's `where`, so there's nothing left to
+  join on. `on true` means "keep whatever the subquery returned for this row".
+  It's boilerplate; read it as punctuation.
+- **`left` vs plain `join`** — if a row has no matching sleep block (the very
+  first prediction point for a baby, with no history behind it), a plain
+  `join lateral` would **drop that row entirely**, silently changing the grain
+  and breaking the 1:1 join promise in §2. `left join lateral` keeps the row
+  and fills nulls. For this design that word is load-bearing, not stylistic.
+- **Why not a correlated scalar subquery in the `SELECT`?** For one column
+  they're equivalent. But `limit 1` gives us the whole matching row at once, so
+  a single lateral yields `end_time`, `block_duration_minutes` and `is_night`
+  together. The scalar-subquery form needs a separate pass per column.
+
+This is the SQL answer to "give me the most recent thing before now", which is
+most of §4 — last wake, last feed, last diaper. Some databases have a dedicated
+`ASOF JOIN` for it; Postgres doesn't, so lateral is the idiom.
+
+At 27,800 spine rows against ~2,800 sleep blocks per baby it should run in
+seconds, but it is a nested loop and it won't stay fast forever. If it drags, the fallback is the
 union-and-window pattern — UNION the spine and the events into one stream
 ordered by time, then carry state forward with
 `last_value(...) over (... rows between unbounded preceding and current row)`,
@@ -506,10 +766,14 @@ CTE. Same shape as `mart_daily_metrics` today, so it'll read familiarly.
 Nothing existing is modified.
 
 ```
+baby_data/models/marts/
+├── fct_sleep_blocks.sql          NEW — merged continuous sleep intervals (§2.2)
+└── fct_sleep_blocks.yml             general-purpose, not ML-specific
+
 baby_data/models/ml/
 ├── ml_prediction_points.sql      the spine — grain + splits
 ├── ml_prediction_points.yml
-├── ml_sleep_labels.sql           spine + 4 labels
+├── ml_sleep_labels.sql           spine + 3 label columns
 ├── ml_sleep_labels.yml
 ├── ml_sleep_features.sql         spine + ~55 features
 ├── ml_sleep_features.yml
@@ -521,8 +785,13 @@ baby_data/tests/
 └── assert_no_prediction_point_during_sleep.sql
 ```
 
-Plus a `models.baby_data.ml` block in `dbt_project.yml` (`+materialized: table`,
-`+schema: ml`), mirroring the existing `marts` block.
+Two config edits: a `models.baby_data.ml` block in `dbt_project.yml`
+(`+materialized: table`, `+schema: ml`) mirroring the existing `marts` block,
+and `dbt-labs/dbt_utils` declared explicitly in `packages.yml` (§2.1).
+
+`fct_sleep_blocks` lands in `marts/` and so inherits `+materialized: table`
+and `+schema: marts` — meaning it appears in the schema the app reads. It is
+purely additive; nothing existing changes shape.
 
 Every `.yml` gets full column descriptions, in keeping with the existing models.
 
@@ -535,7 +804,8 @@ Listed so you can check the data design won't block any of it.
 **Where the code goes.** A new `baby_data/ml/` Python package in this repo, or
 a separate repo — worth a conversation. Either way, structured as: a
 `FeatureSpec` Pydantic model naming which columns are features vs metadata vs
-labels (so the exclusion of `baby_name` is enforced in code, not remembered); a
+labels (which is also where the `baby_name` on/off experiment from §1.4 lives,
+as a field rather than something to remember); a
 thin loader that reads `ml.ml_sleep_training_set` into a DataFrame; and one
 class per model family behind a common interface. That's a natural place to
 work through the OO patterns you wanted to dig into — an abstract base class
@@ -543,8 +813,8 @@ with `fit`/`predict_proba`/`feature_importance`, four concrete subclasses, and
 a runner that doesn't care which one it's holding. Small enough to be real,
 big enough to show why the abstraction earns its place.
 
-**Metrics.** PR-AUC as the headline — at a 29.5 % base rate, accuracy is
-worthless and ROC-AUC flatters. Plus ROC-AUC, Brier score, and a calibration
+**Metrics.** PR-AUC as the headline, on `split_forward_time` — at a 29.5 %
+base rate, accuracy is worthless and ROC-AUC flatters. Plus ROC-AUC, Brier score, and a calibration
 curve, because "70 % likely to nap" should mean it happens 70 % of the time.
 
 **Baselines to beat, in order.** (1) Always predict the base rate. (2) An
@@ -561,18 +831,35 @@ anything.
 
 ---
 
-## 8. What I need from you
+## 8. Review status
 
-1. **Approve or edit the feature list in §4.** That's the main ask. Anything
-   you know matters as a parent that I've missed? Anything I've listed that
-   you know is noise?
-2. **Confirm the onset-based label definition (§1.1).**
-3. **Confirm the 10-minute grid over random sampling (§1.2)** — or tell me
-   you'd rather have the random sample and I'll build it with a pinned seed.
-4. **Confirm day-level splitting (§1.3).**
-5. **Confirm the `ml` schema location (§1.5).**
+### Settled in review round 1 (PR #18)
 
-Once you've said yes I'll build the four dbt models, the tests, and the `.yml`
-docs, run `dbt build` against the real database, and come back with actual row
-counts, the label distributions, and a first look at whether any feature is
-accidentally constant.
+| Your note | Change |
+|---|---|
+| "I prefer onset based" | §1.1 — onset only; the state-based columns are gone |
+| "delete and the 60 mins version" | Both `is_asleep_at_*` columns dropped |
+| "yeah we won't have any more babies" | §1.3 — **`split_forward_time` is now the primary split**, since the only live use is predicting Imogen going forward. §1.4 reopened: `baby_name` is now an experiment, not a ban. §2 sizing note no longer talks about scaling |
+| "lets not bother with this, I only have two babies" | `split_holdout_baby` / `_rev` dropped; kept as a one-line pandas experiment, not schema |
+| "use dbt surrogate key for this" | §2.1 — `dbt_utils.generate_surrogate_key`, plus declaring `dbt_utils` explicitly in `packages.yml` |
+| "do this in a layer before the features so we can recycle the logic" | §2.2 — merge logic promoted to its own mart, `fct_sleep_blocks`, in `marts/` not `ml/` |
+| "why does logistic regression need it?" | §4.1.1 — worked explanation |
+| "how are we thinking to define night sleep?" | §4.4.1 — reuses the repo's existing `is_night` / `night_date`, with the "last completed night" rule spelled out |
+| "can you explain a lateral left join" | §5 — worked explanation |
+
+### Still open
+
+1. **The feature list in §4** — the main ask, and the one thing you haven't
+   commented on. Anything you know matters as a parent that I've missed?
+   Anything listed that you know is noise?
+2. **The 10-minute grid (§1.2)** — you asked about it in chat but didn't land
+   on an answer.
+3. **§2.2 raises one follow-up I did not action:** `fct_wake_windows` has the
+   same overlapping-record problem that `fct_sleep_blocks` fixes, so some of
+   its short wake windows are artefacts. Rebuilding it on the new mart would
+   change numbers the app's Compare tab already shows, so it wants its own PR.
+   Want me to open an issue for it?
+
+Once §4 is signed off I'll build the models, the tests and the `.yml` docs, run
+`dbt build` against the real database, and come back with actual row counts,
+label distributions, and a check on whether any feature came out constant.
