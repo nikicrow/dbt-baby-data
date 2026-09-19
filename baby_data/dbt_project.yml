@@ -43,6 +43,13 @@ models:
       # so the app backend can read them without knowing the dbt target schema.
       +materialized: table
       +schema: marts
+    ml:
+      # Training features and labels for the sleep-prediction model, in a
+      # literal `ml` schema. Same custom-schema treatment as marts: the ci
+      # target still gets the <target_schema>_ml prefix so PR builds never
+      # overwrite the real tables.
+      +materialized: table
+      +schema: ml
 
 seeds:
   baby_data:

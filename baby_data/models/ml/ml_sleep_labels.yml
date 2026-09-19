@@ -1,0 +1,51 @@
+version: 2
+
+models:
+  - name: ml_sleep_labels
+    description: >
+      Training labels, one row per prediction point. ONSET-BASED: the label is
+      1 if a sleep session STARTS within the window, not if she happens to be
+      asleep at the far end of it — a 20-minute catnap beginning in 5 minutes
+      is a yes. Base rates on the current data are 29.9% at 30 minutes and
+      55.1% at 60 minutes, so accuracy is a misleading metric and PR-AUC is the
+      one to report.
+    columns:
+      - name: prediction_id
+        description: Surrogate key, joins 1:1 to ml_prediction_points and ml_sleep_features.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name. Used for grouping and splitting.
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+      - name: calendar_date
+        description: The calendar date of prediction_time.
+      - name: minutes_to_next_sleep
+        description: >
+          Minutes from prediction_time until the next sleep block starts. The
+          raw time-to-event both labels derive from, so a different horizon is a
+          `case when` rather than a rebuild, and a survival model can use this
+          table unchanged. Always positive.
+        tests: [not_null]
+      - name: is_asleep_30_mins
+        description: PRIMARY LABEL. 1 if a sleep block starts within 30 minutes of prediction_time.
+        tests:
+          - not_null
+          - accepted_values: {values: [0, 1], quote: false}
+      - name: is_asleep_60_mins
+        description: 1 if a sleep block starts within 60 minutes of prediction_time.
+        tests:
+          - not_null
+          - accepted_values: {values: [0, 1], quote: false}
+      - name: split_forward_time
+        description: Primary split, carried from ml_prediction_points.
+        tests: [not_null]
+      - name: split_random_day
+        description: Secondary split, carried from ml_prediction_points.
+        tests: [not_null]
+      - name: sample_bucket
+        description: Deterministic 0-99 bucket, carried from ml_prediction_points.
+        tests: [not_null]

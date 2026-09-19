@@ -1,0 +1,220 @@
+version: 2
+
+models:
+  - name: ml_sleep_features
+    description: >
+      The feature matrix, one row per prediction point, joining 1:1 to
+      ml_sleep_labels on prediction_id. THE ONE RULE: every feature uses only
+      events at or before prediction_time. Trailing baselines use rolling
+      windows that end before the prediction point rather than statistics over
+      the whole dataset, which would leak the test set into every training row.
+      Nothing here reads mart_daily_metrics for the current day — its
+      whole-day totals include the future, so the "today so far" features are
+      recomputed from scratch.
+    columns:
+      - name: prediction_id
+        description: Surrogate key, joins 1:1 to ml_prediction_points and ml_sleep_labels.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles. Never a feature — it is a uuid.
+        tests: [not_null]
+      - name: baby_name
+        description: >
+          Always used for grouping and splitting. Whether it is ALSO a feature
+          is an open experiment: with the roster closed at two babies it acts as
+          a per-baby intercept (Imogen settles more readily, 33.8% vs 27.8%),
+          so it is toggled in FeatureSpec and decided on val.
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+
+      # --- 4.1 time of day and calendar -------------------------------------
+      - name: hour_of_day
+        description: Hour 0-23 of prediction_time.
+        tests: [not_null]
+      - name: minutes_since_midnight
+        description: Minutes 0-1439 since local midnight.
+        tests: [not_null]
+      - name: tod_sin
+        description: >
+          sin(2*pi*minutes_since_midnight/1440). Cyclic encoding: time of day is
+          a circle and logistic regression can only draw straight lines, so
+          without this 23:50 and 00:10 sit 1,420 units apart instead of 20.
+          Trees do not need it and will ignore it.
+        tests: [not_null]
+      - name: tod_cos
+        description: cos(2*pi*minutes_since_midnight/1440). Pairs with tod_sin.
+        tests: [not_null]
+      - name: is_night_hours
+        description: True between 19:00 and 07:00.
+        tests: [not_null]
+      - name: day_of_week
+        description: 0 = Sunday. Picks up parental routine, weekday vs weekend.
+        tests: [not_null]
+      - name: is_weekend
+        description: True on Saturday or Sunday.
+        tests: [not_null]
+
+      # --- 4.2 age ----------------------------------------------------------
+      - name: age_days
+        description: Age in whole days. Strongly predictive — the base rate falls from 41.6% at 0-4 weeks to about 17% at 44-52 weeks.
+        tests: [not_null]
+      - name: age_weeks
+        description: Age in completed weeks.
+        tests: [not_null]
+      - name: age_months
+        description: age_days / 30.44, smoother for linear models.
+        tests: [not_null]
+
+      # --- 4.3 current wake state -------------------------------------------
+      - name: minutes_since_last_wake
+        description: >
+          Minutes awake since the last sleep block ended. Expected to be the
+          strongest single feature. 5-360 by construction.
+        tests: [not_null]
+      - name: minutes_since_last_sleep_start
+        description: Minutes since the last sleep block began (onset-to-now spacing).
+        tests: [not_null]
+      - name: last_sleep_duration_minutes
+        description: How long the sleep she just woke from lasted. A 20-minute catnap leaves her ready again sooner than a 2-hour one.
+        tests: [not_null]
+      - name: last_sleep_was_night
+        description: Whether the sleep she just woke from was night sleep.
+        tests: [not_null]
+      - name: minutes_since_morning_wake
+        description: >
+          Minutes since the last NIGHT block ended. Positions her in the day's
+          rhythm better than the clock, because bedtimes and wake times drift.
+        tests: [not_null]
+      - name: nap_number_today
+        description: Naps completed since that morning wake. 0 means none yet.
+        tests: [not_null]
+      - name: is_first_wake_of_day
+        description: True when no nap has been completed since the night ended.
+        tests: [not_null]
+      - name: wake_window_vs_recent_median
+        description: >
+          minutes_since_last_wake divided by the rolling 14-day median completed
+          wake window for this baby. Self-normalises away the age effect: 0.5
+          means half her usual, whether she is 4 weeks or 40.
+      - name: avg_wake_window_last_3
+        description: Mean of her three most recent completed wake windows — catches an off day.
+
+      # --- 4.4 recent sleep history ------------------------------------------
+      - name: sleep_minutes_last_3h
+        description: Minutes asleep in the 3 hours before prediction_time, clipped to the window.
+        tests: [not_null]
+      - name: sleep_minutes_last_6h
+        description: As above over 6 hours.
+        tests: [not_null]
+      - name: sleep_minutes_last_12h
+        description: As above over 12 hours.
+        tests: [not_null]
+      - name: sleep_minutes_last_24h
+        description: As above over 24 hours.
+        tests: [not_null]
+      - name: sleep_count_last_24h
+        description: Number of sleep onsets in the previous 24 hours.
+        tests: [not_null]
+      - name: nap_count_today_so_far
+        description: >
+          Naps completed today BEFORE prediction_time. Deliberately not
+          mart_daily_metrics.nap_count, which is the whole-day total and
+          includes naps that have not happened yet.
+        tests: [not_null]
+      - name: nap_minutes_today_so_far
+        description: Nap minutes today before prediction_time. Same caveat.
+        tests: [not_null]
+      - name: avg_nap_minutes_today_so_far
+        description: >
+          Mean nap length today before prediction_time. NULL when no nap has
+          finished yet (about 24% of rows) — needs an explicit imputation
+          decision in Python, since null here means "no naps yet", not zero.
+      - name: last_night_sleep_minutes
+        description: >
+          Total sleep in the last COMPLETED night. At 23:00 tonight has begun
+          but is not finished, and its total would be future information, so
+          this still points at last night.
+        tests: [not_null]
+      - name: last_night_longest_stretch_minutes
+        description: Longest single block within that night.
+        tests: [not_null]
+      - name: last_night_waking_count
+        description: Gaps between sleep blocks within that night.
+        tests: [not_null]
+      - name: sleep_debt_24h_minutes
+        description: >
+          sleep_minutes_last_24h minus the rolling 14-day median daily sleep for
+          this baby. Negative means under-slept, so more likely to crash.
+
+      # --- 4.5 feeding -------------------------------------------------------
+      - name: minutes_since_last_feed_end
+        description: Minutes since the last COMPLETED feed ended. A feed in progress is excluded, because its end_time is in the future.
+        tests: [not_null]
+      - name: minutes_since_last_feed_start
+        description: Minutes since that feed began.
+        tests: [not_null]
+      - name: last_feed_duration_minutes
+        description: How many minutes that feed lasted.
+        tests: [not_null]
+      - name: fed_in_last_15_mins
+        description: True if a feed ended within 15 minutes. A feed-to-sleep transition is usually tighter than 30 minutes.
+        tests: [not_null]
+      - name: fed_in_last_30_mins
+        description: True if a feed ended within 30 minutes.
+        tests: [not_null]
+      - name: fed_in_last_60_mins
+        description: True if a feed ended within 60 minutes.
+        tests: [not_null]
+      - name: last_feed_type
+        description: >
+          BREAST or BOTTLE. LOW VALUE: only 84 of 3,382 feeds are bottles, so
+          this is about 97.5% constant.
+        tests: [not_null]
+      - name: last_feed_breast_side
+        description: LEFT or RIGHT for breast feeds, null otherwise (about 18% of rows).
+      - name: feed_count_last_3h
+        description: Feeds started in the previous 3 hours.
+        tests: [not_null]
+      - name: feed_count_last_6h
+        description: Feeds started in the previous 6 hours.
+        tests: [not_null]
+      - name: feed_count_last_24h
+        description: Feeds in the previous 24 hours.
+        tests: [not_null]
+      - name: feed_minutes_last_3h
+        description: Total minutes fed in the previous 3 hours.
+        tests: [not_null]
+      - name: feed_minutes_last_24h
+        description: Total minutes fed in the previous 24 hours.
+        tests: [not_null]
+      - name: avg_feed_interval_last_24h
+        description: Mean gap between feed starts in the previous 24 hours. Null when fewer than two feeds (0.4% of rows).
+      - name: is_cluster_feeding
+        description: >
+          Three or more feeds in the previous 3 hours. Cluster feeding is a
+          distinct behavioural state and often precedes a long sleep.
+        tests: [not_null]
+
+      # --- 4.6 diapers -------------------------------------------------------
+      - name: minutes_since_last_diaper_change
+        description: >
+          Minutes since the last change. Noisier than the sleep and feed
+          features — the timestamp records when the parent noticed, not when it
+          happened — so expect modest importance.
+        tests: [not_null]
+      - name: minutes_since_last_dirty_diaper
+        description: Minutes since the last change involving stool.
+        tests: [not_null]
+      - name: had_dirty_diaper_last_60_mins
+        description: True if a dirty diaper was logged within the hour. A poo tends to either precede settling or wreck it.
+        tests: [not_null]
+      - name: diaper_count_last_6h
+        description: Changes in the previous 6 hours.
+        tests: [not_null]
+      - name: diaper_count_last_24h
+        description: Changes in the previous 24 hours.
+        tests: [not_null]
+      - name: dirty_diaper_count_last_24h
+        description: Changes involving stool in the previous 24 hours.
+        tests: [not_null]

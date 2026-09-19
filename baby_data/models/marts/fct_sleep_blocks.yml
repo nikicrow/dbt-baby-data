@@ -1,0 +1,52 @@
+version: 2
+
+models:
+  - name: fct_sleep_blocks
+    description: >
+      One row per CONTINUOUS asleep interval per baby. Sleep sessions that
+      overlap — the same sleep logged across two entries, 0.5% of Ember's rows
+      and 0.2% of Imogen's — are merged into a single block, so the seam
+      between two records no longer reads as a moment of wakefulness that never
+      happened. Block-level attributes are taken from the first session in the
+      block. This is the right table for any "longest continuous stretch"
+      question, and it is what the ml layer's prediction spine is built from.
+    columns:
+      - name: sleep_block_id
+        description: Surrogate key over (baby_id, block_start).
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name, denormalised for convenience.
+      - name: block_start
+        description: When the continuous asleep interval began (earliest merged start_time).
+        tests: [not_null]
+      - name: block_end
+        description: When it ended (latest merged end_time).
+        tests: [not_null]
+      - name: block_duration_minutes
+        description: Whole minutes asleep, end to end across the merged sessions.
+        tests: [not_null]
+      - name: session_count
+        description: >
+          How many raw sleep_sessions rows were merged into this block. 1 for
+          the vast majority; greater than 1 marks a sleep that was logged in
+          pieces.
+        tests: [not_null]
+      - name: is_night
+        description: >
+          Whether this is night sleep, taken from the block's first session.
+          Starts 7pm-7am, or 6-7pm if longer than 3 hours. Same definition as
+          fct_sleep_sessions, so night totals agree across the project.
+        tests: [not_null]
+      - name: night_date
+        description: >
+          For night blocks, the date the night STARTED — a 2am block belongs to
+          the previous calendar date. Null for naps.
+      - name: calendar_date
+        description: The calendar date the block started.
+      - name: age_days
+        description: Baby's age in whole days when the block started.
+      - name: age_weeks
+        description: Baby's age in completed weeks when the block started.

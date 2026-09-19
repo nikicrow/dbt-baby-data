@@ -1,0 +1,30 @@
+version: 2
+
+models:
+  - name: ml_sleep_training_set
+    description: >
+      The 1:1 join of ml_sleep_labels and ml_sleep_features — the single table
+      Python reads. A view rather than a table: both sides are already
+      materialised, so storing the join again would double the disk for
+      nothing. 27,235 rows on the current data. Filter on split_forward_time
+      for the primary evaluation; run the bake-off against val and touch test
+      exactly once at the end.
+    columns:
+      - name: prediction_id
+        description: Surrogate key. One row per prediction point.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+      - name: is_asleep_30_mins
+        description: Primary label. 1 if a sleep block starts within 30 minutes.
+        tests: [not_null]
+      - name: is_asleep_60_mins
+        description: 1 if a sleep block starts within 60 minutes.
+        tests: [not_null]
+      - name: split_forward_time
+        description: Primary split — train on the past, test on the future.
+        tests: [not_null]

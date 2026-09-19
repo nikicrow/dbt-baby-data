@@ -1,0 +1,59 @@
+version: 2
+
+models:
+  - name: ml_prediction_points
+    description: >
+      The spine of the ML layer: one row per (baby, awake moment) on a
+      10-minute grid, with the train/val/test assignments. ml_sleep_labels and
+      ml_sleep_features both select from here and add columns, which is what
+      guarantees they share a grain and join 1:1. Only awake moments exist —
+      a prediction is meaningless while she is already asleep. Excludes points
+      without 60 minutes of forward visibility, points in the first 24 hours of
+      tracking, and points inside awake gaps longer than 6 hours (tracking
+      holes rather than a genuinely awake baby).
+    columns:
+      - name: prediction_id
+        description: Surrogate key over (baby_id, prediction_time).
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: baby_name
+        description: Baby's name. Used for grouping and splitting.
+      - name: prediction_time
+        description: >
+          The moment the model is standing at, in the baby's local time. Always
+          aligned to a 10-minute boundary, and always a moment she was awake.
+        tests: [not_null]
+      - name: calendar_date
+        description: The calendar date of prediction_time.
+      - name: age_days
+        description: Baby's age in whole days at prediction_time.
+      - name: enclosing_gap_minutes
+        description: >
+          Length of the awake gap this point sits inside, previous sleep end to
+          next sleep start. 360 or less by construction.
+        tests: [not_null]
+      - name: split_forward_time
+        description: >
+          PRIMARY SPLIT. Per baby, chronological: first 70% of calendar days
+          train, next 15% val, last 15% test. Mimics deployment, where the model
+          is fit on history and predicts forward. Note the base rate falls
+          across the splits (33.3% / 22.9% / 21.0%) because forward in time is
+          also forward in age — that is real, not a bug.
+        tests:
+          - not_null
+          - accepted_values: {values: ['train', 'val', 'test']}
+      - name: split_random_day
+        description: >
+          Secondary benchmark, 70/15/15 by hashed (baby_id, calendar_date).
+          Grouped by DAY, never by row — rows 10 minutes apart are
+          near-duplicates and a row-level split leaks badly.
+        tests:
+          - not_null
+          - accepted_values: {values: ['train', 'val', 'test']}
+      - name: sample_bucket
+        description: >
+          Deterministic 0-99 bucket over (baby_id, prediction_time), so a
+          reproducible subsample is one `where sample_bucket < n` away.
+        tests: [not_null]

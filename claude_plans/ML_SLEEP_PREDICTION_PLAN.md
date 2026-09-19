@@ -1,7 +1,8 @@
 # ML Sleep Prediction — Feature & Label Layer
 
-**Status: DRAFT, round 2 — your PR #18 comments applied (§8 maps each one).
-Still no code written.**
+**Status: BUILT.** Approved in review, models written, and `dbt build` green
+against a real Postgres loaded from the committed seeds — **PASS=149,
+ERROR=0**. Measured results in §8; §9 maps each review comment to its change.
 
 Goal: predict, at any moment when the baby is awake, whether she will fall
 asleep in the next 30 minutes (and separately, the next 60). This document
@@ -73,7 +74,7 @@ rate.
 
 ---
 
-## 1. Design decisions I want you to sign off on
+## 1. Design decisions — all approved in review
 
 These are the five choices that shape everything else. I've made a
 recommendation on each; overrule any of them.
@@ -761,7 +762,7 @@ CTE. Same shape as `mart_daily_metrics` today, so it'll read familiarly.
 
 ---
 
-## 6. Files this creates
+## 6. Files this adds
 
 Nothing existing is modified.
 
@@ -831,7 +832,100 @@ anything.
 
 ---
 
-## 8. Review status
+## 8. Built — what actually came out
+
+`dbt build` on a local Postgres 16 loaded the same way CI does (replay
+`ci/source_schema.sql`, run `run_pipeline.py` over the committed seeds, 9,764
+rows). Full run: **PASS=149, ERROR=0**, about 1m45s, of which the feature table
+is roughly 60s.
+
+### The tables match what the plan predicted
+
+| | Predicted | Actual |
+|---|---|---|
+| Rows in the ML tables | ~27,270 | **27,235** |
+| `is_asleep_30_mins` = 1 | 29.5 % | **29.9 %** |
+| `is_asleep_60_mins` = 1 | 54.4 % | **55.1 %** |
+| Merged sleep blocks, Ember | 1,725 | **1,725** (8 merges) |
+| Merged sleep blocks, Imogen | 1,098 | **1,098** (2 merges) |
+
+The base rates coming in slightly high is the §4.9 point 3 effect, as expected:
+excluding rows inside 6-hour tracking gaps removes rows that were
+disproportionately "didn't fall asleep soon".
+
+The hour-of-day signal survives the pipeline intact. Against the independent
+Python estimate from §0 (Ember): 05:00 **71 %** vs 68 % predicted, 08:00
+**14 %** vs 15 %, 13:00 **16 %** vs 16 %, 17:00 **18 %** vs 18 %. Two separate
+implementations agreeing this closely is good evidence the SQL does what was
+intended.
+
+### Invariants checked, all clean
+
+All zero: negative `minutes_since_last_wake`, wake windows over 360 minutes,
+negative time-since-feed or -diaper, non-positive or null
+`minutes_to_next_sleep`, and rows where `is_asleep_30_mins = 1` but
+`is_asleep_60_mins = 0`. The joined view returns exactly 27,235 rows with
+27,235 distinct keys, so the 1:1 join holds. No feature is constant — the
+minimum distinct count across all 55 is 2, which is correct for the booleans.
+
+### ⚠️ Finding: the base rate drifts hard across the forward-time split
+
+This was not in the plan and it matters for phase 2.
+
+| Split | Rows | Ember ages | Imogen ages | `is_asleep_30_mins` = 1 |
+|---|---|---|---|---|
+| `train` | 19,119 | 3–37 wk | 0–16 wk | **33.3 %** |
+| `val` | 4,072 | 37–44 wk | 16–20 wk | **22.9 %** |
+| `test` | 4,044 | 44–52 wk | 20–23 wk | **21.0 %** |
+
+The cause is clean and monotonic — forward in time is forward in age, and older
+babies nap less readily at any given awake moment:
+
+| Age | 0–4 wk | 8–12 wk | 16–20 wk | 28–32 wk | 40–44 wk | 48–52 wk |
+|---|---|---|---|---|---|---|
+| `is_asleep_30_mins` = 1 | 41.6 % | 38.3 % | 31.4 % | 24.9 % | 17.2 % | 18.5 % |
+
+Ember's mean wake window stretches from 60 minutes in `train` to 91 in `test`.
+
+This is the deployment reality rather than a bug — but three consequences:
+
+1. **A model fit on `train` will be systematically over-confident on `test`.**
+   Calibration is not optional here; report the Brier score and a calibration
+   curve, not just ranking metrics.
+2. **PR-AUC is not comparable across splits**, because its baseline *is* the
+   base rate. A PR-AUC of 0.40 on `test` (base 21 %) is a better model than
+   0.40 on `train` (base 33 %). Always quote the base rate alongside it.
+3. `age_days` is doing heavy lifting, so the leave-one-baby-out experiment from
+   §1.3 is more interesting than it first looked: Ember's `train` ages
+   (3–37 wk) barely overlap Imogen's (0–16 wk).
+
+### Three columns are nullable, deliberately
+
+Everything else is `not_null` tested. These need an explicit imputation
+decision in Python rather than a silent `fillna(0)`:
+
+| Column | Null rows | Why |
+|---|---|---|
+| `avg_nap_minutes_today_so_far` | 6,522 (24 %) | No nap has finished yet today. Null means "no naps yet", which is **not** the same as a nap of length zero |
+| `last_feed_breast_side` | 4,929 (18 %) | Bottle feeds, and breast feeds logged without a side |
+| `avg_feed_interval_last_24h` | 100 (0.4 %) | Fewer than two feeds in the window, so there is no gap to average |
+
+### Two notes on the build
+
+- **`fct_sleep_blocks` confirms the overlap problem is real**: 8 blocks for
+  Ember and 2 for Imogen merged more than one raw session, exactly matching the
+  overlap counts in §0. Those are the seams that would otherwise read as
+  spurious wake windows — the `fct_wake_windows` follow-up in §9 is a real bug,
+  not a theoretical one.
+- **`package-lock.yml` is left untouched.** Adding `dbt_utils` to
+  `packages.yml` changes the lock's content hash, and `dbt deps` re-resolves
+  and rewrites the lock automatically when it mismatches. Worth knowing: the
+  committed hash *already* mismatches what the current dbt version computes, so
+  CI has been re-locking on every run regardless of this change.
+
+---
+
+## 9. Review status
 
 ### Settled in review round 1 (PR #18)
 
@@ -847,19 +941,18 @@ anything.
 | "how are we thinking to define night sleep?" | §4.4.1 — reuses the repo's existing `is_night` / `night_date`, with the "last completed night" rule spelled out |
 | "can you explain a lateral left join" | §5 — worked explanation |
 
+### Approved in review round 2
+
+The 10-minute grid (§1.2) and the feature list (§4) were both signed off
+without changes, which is what unblocked the build in §9.
+
 ### Still open
 
-1. **The feature list in §4** — the main ask, and the one thing you haven't
-   commented on. Anything you know matters as a parent that I've missed?
-   Anything listed that you know is noise?
-2. **The 10-minute grid (§1.2)** — you asked about it in chat but didn't land
-   on an answer.
-3. **§2.2 raises one follow-up I did not action:** `fct_wake_windows` has the
+1. **§2.2 raises one follow-up I did not action:** `fct_wake_windows` has the
    same overlapping-record problem that `fct_sleep_blocks` fixes, so some of
    its short wake windows are artefacts. Rebuilding it on the new mart would
    change numbers the app's Compare tab already shows, so it wants its own PR.
    Want me to open an issue for it?
 
-Once §4 is signed off I'll build the models, the tests and the `.yml` docs, run
-`dbt build` against the real database, and come back with actual row counts,
-label distributions, and a check on whether any feature came out constant.
+2. **Phase 2 (§7) has not started** — the Python package, `FeatureSpec`, and
+   the four model families. The data layer is done and green; say the word.
