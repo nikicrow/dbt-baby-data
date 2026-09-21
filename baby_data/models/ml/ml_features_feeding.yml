@@ -1,0 +1,64 @@
+version: 2
+
+models:
+  - name: ml_features_feeding
+    description: >
+      Feeding feature family — everything derivable from stg_feeding_sessions,
+      at one row per prediction point. A feed in progress at prediction_time is
+      excluded, because its end_time is in the future. Joins 1:1 to its sibling
+      families on prediction_id.
+    columns:
+      - name: prediction_id
+        description: Surrogate key. Joins 1:1 to ml_prediction_points.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+      - name: minutes_since_last_feed_end
+        description: Minutes since the last COMPLETED feed ended.
+        tests: [not_null]
+      - name: minutes_since_last_feed_start
+        description: Minutes since that feed began.
+        tests: [not_null]
+      - name: last_feed_duration_minutes
+        description: How many minutes that feed lasted.
+        tests: [not_null]
+      - name: fed_in_last_15_mins
+        description: True if a feed ended within 15 minutes. A feed-to-sleep transition is usually tighter than 30 minutes.
+        tests: [not_null]
+      - name: fed_in_last_30_mins
+        description: True if a feed ended within 30 minutes.
+        tests: [not_null]
+      - name: fed_in_last_60_mins
+        description: True if a feed ended within 60 minutes.
+        tests: [not_null]
+      - name: last_feed_type
+        description: >
+          BREAST or BOTTLE. LOW VALUE: only 84 of 3,382 feeds are bottles, so
+          this is about 97.5% constant.
+        tests: [not_null]
+      - name: last_feed_breast_side
+        description: LEFT or RIGHT for breast feeds, null otherwise (about 18% of rows).
+      - name: feed_count_last_3h
+        description: Feeds started in the previous 3 hours.
+        tests: [not_null]
+      - name: feed_count_last_6h
+        description: Feeds started in the previous 6 hours.
+        tests: [not_null]
+      - name: feed_count_last_24h
+        description: Feeds in the previous 24 hours.
+        tests: [not_null]
+      - name: feed_minutes_last_3h
+        description: Total minutes fed in the previous 3 hours.
+        tests: [not_null]
+      - name: feed_minutes_last_24h
+        description: Total minutes fed in the previous 24 hours.
+        tests: [not_null]
+      - name: avg_feed_interval_last_24h
+        description: Mean gap between feed starts in the previous 24 hours. Null when fewer than two feeds (0.4% of rows).
+      - name: is_cluster_feeding
+        description: Three or more feeds in the previous 3 hours — a distinct behavioural state that often precedes a long sleep.
+        tests: [not_null]

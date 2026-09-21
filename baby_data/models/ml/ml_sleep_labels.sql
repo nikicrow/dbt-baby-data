@@ -25,11 +25,26 @@ with_next_sleep as (
         p.*,
         next_sleep.block_start as next_sleep_start
     from points p
-    -- LEFT is load-bearing: a plain `join lateral` would silently drop any row
+    -- `lateral` lets this subquery see p's columns. Without it, a subquery in
+    -- FROM is evaluated once, standalone, and `p.baby_id` would be an error.
+    -- With it, the subquery runs once per row of p — a for-loop over the spine.
+    --
+    -- `left` is load-bearing: a plain `join lateral` silently DROPS any row
     -- with no match, changing the grain and breaking the 1:1 join promise.
     -- (The spine already excludes points without 60 minutes of forward
     -- visibility, so in practice every row matches — the assert_ml_* tests
-    -- prove it rather than assuming it.)
+    -- prove that rather than assuming it.)
+    --
+    -- `order by ... limit 1` is what makes this "the NEXT sleep" rather than
+    -- "every future sleep". The where clause matches every block after
+    -- prediction_time — hundreds of them — so without the limit this join
+    -- would fan out one row per future sleep and explode the table. Ordering
+    -- ascending and keeping one row picks the soonest, which is the only one
+    -- the label depends on.
+    --
+    -- `on true` is punctuation: a join needs a condition, but the correlation
+    -- already lives in the subquery's where, so there is nothing left to join
+    -- on. Read it as "keep whatever the subquery returned for this row".
     left join lateral (
         select b.block_start
         from {{ ref('fct_sleep_blocks') }} b

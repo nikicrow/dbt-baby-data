@@ -1,25 +1,31 @@
--- The ML layer's central invariant: ml_prediction_points, ml_sleep_labels and
--- ml_sleep_features are one row per prediction point, with identical keys.
+-- The ML layer's central invariant: the spine, the labels, the three topic
+-- feature families and the assembled feature table are all one row per
+-- prediction point, with identical keys.
 --
 -- Fails loudly the moment a `where` clause quietly drops rows from one side, or
--- a lateral join fans out. Returns one row per mismatched key, with the side it
--- is missing from.
+-- a lateral join fans out. Returns one row per mismatched key, naming the table
+-- it disagrees with.
 
-with points as (select prediction_id from {{ ref('ml_prediction_points') }}),
-labels as (select prediction_id from {{ ref('ml_sleep_labels') }}),
-features as (select prediction_id from {{ ref('ml_sleep_features') }})
+{% set ml_tables = [
+    'ml_sleep_labels',
+    'ml_features_sleep',
+    'ml_features_feeding',
+    'ml_features_diaper',
+    'ml_sleep_features',
+] %}
 
-select prediction_id, 'missing from ml_sleep_labels' as problem
-from points where prediction_id not in (select prediction_id from labels)
+with points as (select prediction_id from {{ ref('ml_prediction_points') }})
+
+{% for tbl in ml_tables %}
+select prediction_id, {{ "'missing from " ~ tbl ~ "'" }} as problem
+from points
+where prediction_id not in (select prediction_id from {{ ref(tbl) }})
 
 union all
-select prediction_id, 'missing from ml_sleep_features'
-from points where prediction_id not in (select prediction_id from features)
 
-union all
-select prediction_id, 'in ml_sleep_labels but not in the spine'
-from labels where prediction_id not in (select prediction_id from points)
+select prediction_id, {{ "'in " ~ tbl ~ " but not in the spine'" }}
+from {{ ref(tbl) }}
+where prediction_id not in (select prediction_id from points)
 
-union all
-select prediction_id, 'in ml_sleep_features but not in the spine'
-from features where prediction_id not in (select prediction_id from points)
+{% if not loop.last %}union all{% endif %}
+{% endfor %}

@@ -64,7 +64,7 @@ Two things fall out of this table:
 
 1. **The class balance is fine.** Roughly 30/70 at 30 minutes and almost 50/50
    at 60 minutes. No resampling, no SMOTE, no synthetic minority anything.
-2. **The tables are small.** 28k rows × ~55 columns is a few megabytes. This
+2. **The tables are small.** 27k rows × 52 feature columns is a few megabytes. This
    answers your sizing worry directly — see §5.
 
 And the signal is visibly there before we model anything. Probability she falls
@@ -213,15 +213,20 @@ a two-column key. We never build a row we won't use.
                      │        │                Defines the grain. Nothing
         ┌────────────┘        └────────────┐   else is allowed to change it.
         ▼                                  ▼
-  ml_sleep_labels                   ml_sleep_features
-  spine + 3 label cols              spine + ~55 feature cols
-  ~27,800 rows                      ~27,800 rows
+  ml_sleep_labels        ml_features_sleep ─┐   one model per TOPIC, each
+  spine + 3 label cols   ml_features_feeding├─▶ selecting from the spine and
+  27,235 rows            ml_features_diaper ┘   usable on its own
+        │                                  │
+        │                                  ▼
+        │                         ml_sleep_features
+        │                         spine + calendar/age + the 3 families
+        │                         27,235 rows, 52 features
         │                                  │
         └──────────────┬───────────────────┘
                        ▼
             ml_sleep_training_set  (view)
-            inner join on (baby_id, prediction_time)
-            ~27,800 rows — what Python reads
+            inner join on prediction_id
+            27,235 rows — what Python reads
 ```
 
 Four models. `ml_prediction_points` is the contract: both children select
@@ -247,7 +252,7 @@ only growth is Imogen's ongoing logging, roughly 59 rows a day.
 **Why not one wide table?** Because the label definitions will change (you may
 want a 45- or 90-minute horizon) far more often than the features
 will, and vice versa. Separating them means a label change doesn't force a
-recompute of 55 feature columns. The joined view costs nothing.
+recompute of 52 feature columns. The joined view costs nothing.
 
 ### 2.1 The surrogate key — `dbt_utils.generate_surrogate_key`
 
@@ -325,6 +330,42 @@ were merged — 1 for the vast majority), `is_night`, `night_date`, `age_days`,
 - "Longest continuous stretch" questions — the ones you actually care about at
   4 am — are a `max(block_duration_minutes)` on this table, and are currently
   slightly wrong anywhere they're computed from raw sessions.
+
+### 2.3 One feature model per topic
+
+Taking your review note: the features are not one monolith. Each event source
+gets its own model, all at the spine's grain:
+
+| Model | Source | Columns |
+|---|---|---|
+| `ml_features_sleep` | `fct_sleep_blocks` | 21 |
+| `ml_features_feeding` | `stg_feeding_sessions` | 15 |
+| `ml_features_diaper` | `stg_diaper_events` | 6 |
+| `ml_sleep_features` | the three above, plus calendar/age | 52 |
+
+Each family selects from `ml_prediction_points` and adds columns, so they all
+share a grain by construction and join 1:1 on `prediction_id`. `ml_sleep_features`
+is then a thin assembler.
+
+What this buys, which is what you were after:
+
+- **Adding a feature touches one model.** A new feeding feature rebuilds a
+  15-column table, not a 52-column one.
+- **A family is usable alone.** A model about feed timing, or about night
+  wakings, can select the families it needs — the sleep family does not care
+  that a sleep-onset model exists.
+- **Failures localise.** A broken lateral in the diaper family fails
+  `ml_features_diaper`, and the others still build.
+
+**Why calendar and age are not a fourth family.** They have no event source —
+they are pure functions of columns the spine already carries
+(`prediction_time`, `age_days`). A separate model would add a join and a table
+for ten columns that nothing else would ever reuse independently, so they live
+on the assembler. Say the word if you'd rather have the symmetry.
+
+**Naming:** `diaper`, not `nappy`, to match `stg_diaper_events`,
+`raw_diaper_events` and the app's `DiaperEvent` model. Happy to switch if you
+prefer your word over the schema's.
 
 ---
 
@@ -776,7 +817,13 @@ baby_data/models/ml/
 ├── ml_prediction_points.yml
 ├── ml_sleep_labels.sql           spine + 3 label columns
 ├── ml_sleep_labels.yml
-├── ml_sleep_features.sql         spine + ~55 features
+├── ml_features_sleep.sql         topic family: fct_sleep_blocks
+├── ml_features_sleep.yml
+├── ml_features_feeding.sql       topic family: stg_feeding_sessions
+├── ml_features_feeding.yml
+├── ml_features_diaper.sql        topic family: stg_diaper_events
+├── ml_features_diaper.yml
+├── ml_sleep_features.sql         assembler: calendar/age + the 3 families
 ├── ml_sleep_features.yml
 ├── ml_sleep_training_set.sql     the 1:1 join, materialised as a view
 └── ml_sleep_training_set.yml
@@ -940,6 +987,19 @@ decision in Python rather than a silent `fillna(0)`:
 | "why does logistic regression need it?" | §4.1.1 — worked explanation |
 | "how are we thinking to define night sleep?" | §4.4.1 — reuses the repo's existing `is_night` / `night_date`, with the "last completed night" rule spelled out |
 | "can you explain a lateral left join" | §5 — worked explanation |
+
+### Review round 3 (PR #18, on the code)
+
+| Your note | Change |
+|---|---|
+| "materialise these into 3 separate feature tables first by topic" | §2.3 — `ml_features_sleep` / `_feeding` / `_diaper`, with `ml_sleep_features` reduced to an assembler. Verified column-for-column identical output: same 27,235 rows, same 56 columns, same base rates |
+| "why limit 1" | Answered in `ml_sleep_labels.sql`: without it the lateral matches *every* future sleep and fans the table out; ordering ascending and keeping one picks the soonest, which is the only one the label depends on |
+| "what is on true" | Answered in the same comment block: punctuation, since the correlation already lives in the subquery's `where` |
+| "can you explain this" (the md5 split expression) | Answered inline in `ml_prediction_points.sql`, read inside out, including why it is hashed rather than `random()` and why 7 hex chars rather than 8 |
+
+One correction that fell out of the refactor: the feature count is **52**, not
+the 55 quoted in earlier drafts. Nothing was lost — the original table also had
+56 columns (52 features + 4 identity) — the earlier number was just wrong.
 
 ### Approved in review round 2
 

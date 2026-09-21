@@ -156,6 +156,24 @@ select
 
     -- Secondary benchmark. Grouped by DAY, never by row: rows 10 minutes apart
     -- are near-duplicates, so a row-level split leaks badly.
+    --
+    -- The md5 expression is a deterministic stand-in for random(), read
+    -- inside out:
+    --   md5(baby_id || '|' || date)  -> a 32-char hex string, stable forever
+    --   substr(..., 1, 7)            -> its first 7 hex chars
+    --   'x' || ...                   -> makes that a hex BIT-STRING literal
+    --   ::bit(28)::int               -> 28 bits as an integer, 0 .. 268435455
+    --   % 100                        -> a bucket 0-99, evenly spread
+    --
+    -- Why not random()? Because a rebuild would reshuffle every row into a
+    -- different split, so yesterday's model scores would not be comparable to
+    -- today's. Hashing the key means the assignment is a pure function of the
+    -- data: same baby, same date, same bucket, on any machine, forever.
+    --
+    -- Why 7 chars and not 8? 8 hex chars is bit(32), which casts to a SIGNED
+    -- int and can come out negative, making `% 100` return a negative bucket.
+    -- 7 chars maxes out at 2^28-1, comfortably positive. This is the standard
+    -- Postgres idiom for exactly that reason.
     case
         when ('x' || substr(md5(k.baby_id::text || '|' || k.prediction_time::date::text), 1, 7))::bit(28)::int % 100 < 70 then 'train'
         when ('x' || substr(md5(k.baby_id::text || '|' || k.prediction_time::date::text), 1, 7))::bit(28)::int % 100 < 85 then 'val'

@@ -1,0 +1,39 @@
+version: 2
+
+models:
+  - name: ml_features_diaper
+    description: >
+      Diaper feature family — everything derivable from stg_diaper_events, at
+      one row per prediction point. Named `diaper` rather than `nappy` to match
+      stg_diaper_events and the app's DiaperEvent model. Expect these to matter
+      less than the sleep and feed families: a diaper timestamp records when the
+      parent noticed, not when it happened. Joins 1:1 to its siblings on
+      prediction_id.
+    columns:
+      - name: prediction_id
+        description: Surrogate key. Joins 1:1 to ml_prediction_points.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+      - name: minutes_since_last_diaper_change
+        description: Minutes since the last change.
+        tests: [not_null]
+      - name: minutes_since_last_dirty_diaper
+        description: Minutes since the last change involving stool.
+        tests: [not_null]
+      - name: had_dirty_diaper_last_60_mins
+        description: True if a dirty diaper was logged within the hour. A poo tends to either precede settling or wreck it.
+        tests: [not_null]
+      - name: diaper_count_last_6h
+        description: Changes in the previous 6 hours.
+        tests: [not_null]
+      - name: diaper_count_last_24h
+        description: Changes in the previous 24 hours.
+        tests: [not_null]
+      - name: dirty_diaper_count_last_24h
+        description: Changes involving stool in the previous 24 hours.
+        tests: [not_null]
