@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: ml_features_sleep
+    description: >
+      Sleep feature family — everything derivable from fct_sleep_blocks, at one
+      row per prediction point. Current wake state, trailing sleep totals, last
+      completed night, and the rolling per-baby baselines. Usable on its own: a
+      model about night wakings or wake-window drift needs this and nothing
+      else. Joins 1:1 to its sibling families on prediction_id.
+    columns:
+      - name: prediction_id
+        description: Surrogate key. Joins 1:1 to ml_prediction_points.
+        tests: [not_null, unique]
+      - name: baby_id
+        description: Foreign key to baby_profiles.
+        tests: [not_null]
+      - name: prediction_time
+        description: The moment the model is standing at, in the baby's local time.
+        tests: [not_null]
+      - name: minutes_since_last_wake
+        description: Minutes awake since the last sleep block ended. Expected to be the strongest single feature. 5-360 by construction.
+        tests: [not_null]
+      - name: minutes_since_last_sleep_start
+        description: Minutes since the last sleep block began.
+        tests: [not_null]
+      - name: last_sleep_duration_minutes
+        description: How long the sleep she just woke from lasted.
+        tests: [not_null]
+      - name: last_sleep_was_night
+        description: Whether that sleep was night sleep.
+        tests: [not_null]
+      - name: minutes_since_morning_wake
+        description: Minutes since the last NIGHT block ended — positions her in the day's rhythm better than the clock.
+        tests: [not_null]
+      - name: nap_number_today
+        description: Naps completed since that morning wake. 0 means none yet.
+        tests: [not_null]
+      - name: is_first_wake_of_day
+        description: True when no nap has been completed since the night ended.
+        tests: [not_null]
+      - name: wake_window_vs_recent_median
+        description: minutes_since_last_wake over the rolling 14-day median wake window. Self-normalises away the age effect.
+      - name: avg_wake_window_last_3
+        description: Mean of her three most recent completed wake windows.
+      - name: sleep_minutes_last_3h
+        description: Minutes asleep in the previous 3 hours, clipped to the window.
+        tests: [not_null]
+      - name: sleep_minutes_last_6h
+        description: As above over 6 hours.
+        tests: [not_null]
+      - name: sleep_minutes_last_12h
+        description: As above over 12 hours.
+        tests: [not_null]
+      - name: sleep_minutes_last_24h
+        description: As above over 24 hours.
+        tests: [not_null]
+      - name: sleep_count_last_24h
+        description: Sleep onsets in the previous 24 hours.
+        tests: [not_null]
+      - name: nap_count_today_so_far
+        description: Naps completed today BEFORE prediction_time — not the whole-day total.
+        tests: [not_null]
+      - name: nap_minutes_today_so_far
+        description: Nap minutes today before prediction_time.
+        tests: [not_null]
+      - name: avg_nap_minutes_today_so_far
+        description: >
+          Mean nap length today before prediction_time. NULL when no nap has
+          finished yet (about 24% of rows) — null means "no naps yet", which is
+          not the same as a nap of length zero.
+      - name: last_night_sleep_minutes
+        description: Total sleep in the last COMPLETED night. At 23:00 this still points at last night.
+        tests: [not_null]
+      - name: last_night_longest_stretch_minutes
+        description: Longest single block within that night.
+        tests: [not_null]
+      - name: last_night_waking_count
+        description: Gaps between sleep blocks within that night.
+        tests: [not_null]
+      - name: sleep_debt_24h_minutes
+        description: sleep_minutes_last_24h minus the rolling 14-day median daily sleep. Negative means under-slept.

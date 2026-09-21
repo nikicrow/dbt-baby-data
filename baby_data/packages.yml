@@ -1,3 +1,8 @@
 packages:
   - package: dbt-labs/codegen
     version: 0.12.1
+  # Used directly by models/ml and models/marts/fct_sleep_blocks
+  # (generate_surrogate_key, star). It already resolved transitively via
+  # codegen, but a model calling its macros should not depend on that.
+  - package: dbt-labs/dbt_utils
+    version: 1.3.3
