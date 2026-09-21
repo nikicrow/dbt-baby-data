@@ -727,6 +727,60 @@ left join lateral (
 ) s on true
 ```
 
+### 5.1 Where `lead()` beats the lateral — and where it doesn't
+
+Review asked whether the spine's gap lookup should have been a window function
+rather than two lateral joins, and whether that would be faster or more
+correct. Measured, on the real data:
+
+| Approach | Time |
+|---|---|
+| Anti-join + 2 laterals (original) | 8.2–11.2 s |
+| `lead()` + range join | 4.1–4.5 s |
+
+**`lead()` wins, and not only on speed.** The original asked, for each of 27,800
+grid points, two separate "nearest block" questions. But the blocks are merged
+and non-overlapping, so the gaps between them can be computed *once*, in a
+single pass:
+
+```sql
+select baby_id,
+       block_end as gap_start,
+       lead(block_start) over (partition by baby_id order by block_start) as gap_end
+from fct_sleep_blocks
+```
+
+Then a grid point is awake **if and only if** it falls inside one of those
+gaps, so one range join replaces the anti-join *and* both laterals. That is
+the bigger win: three operations become one, and "this point sits in a real
+awake window" stops being a `where` clause bolted on afterwards and becomes
+structural — the join cannot produce a null gap, so the null checks the old
+`kept` filter needed are gone.
+
+Verified byte-identical: zero rows differ in either direction across all ten
+spine columns, and the whole build went from 1m46s to about 56s.
+
+**Why it doesn't generalise to the rest of the layer.** The honest answer to
+"should every lateral be a window function" is no, and the distinction is
+worth stating because it is the thing to check when writing the next one:
+
+- The spine's lookup is **interval containment** — each grid point lies inside
+  exactly one gap, and a gap is a pair of adjacent rows. That is precisely
+  what `lead()` produces, so the rewrite is natural.
+- Most feature laterals are **aggregates over a trailing window** —
+  `sum` of sleep in the last 24 hours, the median wake window over 14 days,
+  feeds in the last 3 hours. `lag`/`lead` return the *adjacent row*, not a
+  reduction over a range, so they cannot express these at all. A window frame
+  (`range between interval '24 hours' preceding and current row`) could, but
+  only after UNIONing the grid and the event stream into one ordered sequence,
+  which trades a clear lateral for a much harder-to-read query.
+
+For the record, `ml_features_sleep` is now the slow model at ~32 s of the ~56 s
+build. I tested indexes on `(baby_id, block_end)` and friends as the cheaper
+fix: only about 15 % better, because the laterals that dominate are the
+aggregate ones, which scan a range whatever the index says — and dbt drops and
+recreates the table each run anyway. Not worth the config, so not added.
+
 #### What `left join lateral` is doing — your question
 
 **In one line:** `LATERAL` lets a subquery in the `FROM` clause see the columns
@@ -996,6 +1050,7 @@ decision in Python rather than a silent `fillna(0)`:
 | "why limit 1" | Answered in `ml_sleep_labels.sql`: without it the lateral matches *every* future sleep and fans the table out; ordering ascending and keeping one picks the soonest, which is the only one the label depends on |
 | "what is on true" | Answered in the same comment block: punctuation, since the correlation already lives in the subquery's `where` |
 | "can you explain this" (the md5 split expression) | Answered inline in `ml_prediction_points.sql`, read inside out, including why it is hashed rather than `random()` and why 7 hex chars rather than 8 |
+| "why lateral rather than lag/lead? more efficient? more correct?" | **You were right.** §5.1 — the spine's anti-join and both laterals are replaced by one `lead()` plus a range join. Output byte-identical, the model 2x faster, the whole build 40% faster |
 
 One correction that fell out of the refactor: the feature count is **52**, not
 the 55 quoted in earlier drafts. Nothing was lost — the original table also had

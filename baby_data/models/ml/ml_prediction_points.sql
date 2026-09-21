@@ -57,65 +57,58 @@ grid as (
 
 ),
 
-awake as (
+gaps as (
 
-    select g.*
-    from grid g
-    where not exists (
-        select 1
-        from blocks b
-        where b.baby_id = g.baby_id
-          and g.prediction_time >= b.block_start
-          and g.prediction_time <  b.block_end
-    )
+    -- Every awake interval, computed ONCE on the blocks table: each block's end
+    -- paired with the next block's start. Because blocks are merged and
+    -- non-overlapping, lead() over block_start gives exactly the gaps between
+    -- them, in one pass.
+    select
+        baby_id,
+        block_end as gap_start,
+        lead(block_start) over (partition by baby_id order by block_start) as gap_end
+    from blocks
 
 ),
 
-with_gap as (
+in_gap as (
 
-    -- The awake gap this point sits inside: the previous block to end and the
-    -- next block to start. A gap longer than 6 hours is a tracking hole, not a
-    -- genuinely awake baby, and the rows inside it are measurement error.
-    -- 6 hours matches the bound fct_wake_windows already uses.
+    -- A grid point is AWAKE if and only if it falls inside one of those gaps,
+    -- so this single range join does the awake filter and the gap lookup at
+    -- once. The inner join is deliberate: a point in no gap is either inside a
+    -- sleep (not awake) or outside the tracked range entirely, and neither
+    -- belongs in the spine.
+    --
+    -- A gap longer than 6 hours is a tracking hole rather than a genuinely
+    -- awake baby, and the rows inside it are measurement error. 6 hours matches
+    -- the bound fct_wake_windows already uses.
     select
-        a.*,
-        prev_block.block_end as gap_start,
-        next_block.block_start as gap_end,
-        round(extract(epoch from (next_block.block_start - prev_block.block_end)) / 60)::int
+        g.*,
+        gp.gap_start,
+        gp.gap_end,
+        round(extract(epoch from (gp.gap_end - gp.gap_start)) / 60)::int
             as enclosing_gap_minutes
-    from awake a
-    left join lateral (
-        select b.block_end
-        from blocks b
-        where b.baby_id = a.baby_id
-          and b.block_end <= a.prediction_time
-        order by b.block_end desc
-        limit 1
-    ) prev_block on true
-    left join lateral (
-        select b.block_start
-        from blocks b
-        where b.baby_id = a.baby_id
-          and b.block_start > a.prediction_time
-        order by b.block_start
-        limit 1
-    ) next_block on true
+    from grid g
+    inner join gaps gp
+        on gp.baby_id = g.baby_id
+       and g.prediction_time >= gp.gap_start
+       and g.prediction_time <  gp.gap_end
 
 ),
 
 kept as (
 
     select *
-    from with_gap
+    from in_gap
     where
         -- Need 60 minutes of forward visibility to know the label. Labelling
         -- these 0 would be inventing negatives.
         prediction_time <= last_log - interval '60 minutes'
         -- No history, so every trailing feature would be null.
         and prediction_time >= first_log + interval '24 hours'
-        -- Inside a tracking hole.
-        and gap_start is not null
-        and gap_end is not null
+        -- Inside a tracking hole. (The null checks the previous lateral-based
+        -- version needed are gone: the inner join above cannot produce a null
+        -- gap.)
         and enclosing_gap_minutes <= 360
 
 ),
