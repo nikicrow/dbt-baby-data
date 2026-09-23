@@ -24,11 +24,13 @@
 > - **The laptop is decommissioned as a host.** Its `tailscale serve` config is
 >   removed and uvicorn is stopped. Its Postgres still runs, holding a stale
 >   copy frozen ~2026-08-25, kept deliberately as a rollback.
-> - **`~/.dbt/profiles.yml` on the laptop is deliberately broken.** The `local`
->   target is renamed `laptop_stale_rollback` with **no default target**, so a
->   bare `dbt run` fails rather than silently rebuilding the stale database.
->   That is intentional; do not "fix" it by restoring a default. Backup at
->   `~/.dbt/profiles.yml.bak`.
+> - **`~/.dbt/profiles.yml` on the laptop has no default target.** The `local`
+>   target is renamed `laptop_stale_rollback`, so a bare `dbt run` fails rather
+>   than silently rebuilding the stale database. That is intentional; do not
+>   "fix" it by restoring a default. Backup at `~/.dbt/profiles.yml.bak`.
+>   Since 2026-09-23 it also has `fedora_readonly` and `fedora_via_tunnel`,
+>   which do reach the real database over an SSH tunnel, so the earlier claim
+>   that the laptop cannot is no longer true — see the README.
 > - **Phase 4 (Task Scheduler at boot) is dead.** An always-on server made it
 >   unnecessary. It was never started, and should not be.
 > - Every `unagi.tail53f4fd.ts.net` URL below should read
@@ -403,8 +405,13 @@ Marked with what has actually been confirmed as of 2026-08-25.
   `55dafde`. Not introduced here, but it constrains any UI tweak.
 - **`App.tsx` auto-creates a baby named "Baby"** when it finds zero babies. Never
   point the frontend at an empty database.
-- **Postgres listens on `0.0.0.0:5432`.** Worth setting
-  `listen_addresses = 'localhost'` in `postgresql.conf` while hardening.
+- ~~**Postgres listens on `0.0.0.0:5432`.** Worth setting
+  `listen_addresses = 'localhost'` in `postgresql.conf` while hardening.~~
+  **Superseded 2026-09-23.** This described the laptop. On `fedora-1` Postgres
+  is a podman container (`baby-data-postgres`) publishing `127.0.0.1:5433`, so
+  it is already loopback-only and there is no `postgresql.conf` on the host to
+  edit. Reach it over an SSH tunnel — see "Connecting to the database on
+  fedora-1" in the README.
 
 ## Out of scope
 
