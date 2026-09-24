@@ -11,3 +11,19 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "pydantic-settings>=2.0",
 ]
+
+# The ML code lives in ml/ as its own package (baby-ml), outside the dbt
+# project. It's opt-in: `uv sync` (and CI) leave it out, and
+# `uv sync --group ml` adds it plus Jupyter.
+[dependency-groups]
+ml = [
+    "baby-ml",
+    "jupyterlab>=4.2",
+    "ipykernel>=6.29",
+]
+
+[tool.uv.workspace]
+members = ["ml"]
+
+[tool.uv.sources]
+baby-ml = { workspace = true }

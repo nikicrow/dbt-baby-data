@@ -12,3 +12,7 @@ __pycache__/
 
 # dbt writes an anonymous usage-tracking id next to any profiles.yml it uses.
 .user.yml
+
+# ML training-set snapshots pulled from the database — data, not code.
+ml/data/
+.ipynb_checkpoints/
