@@ -1,0 +1,26 @@
+[project]
+name = "baby-ml"
+version = "0.1.0"
+description = "Sleep-prediction models trained on the dbt project's ml.ml_sleep_training_set"
+requires-python = ">=3.11"
+dependencies = [
+    "lightgbm>=4.5",
+    "xgboost>=2.1",
+    "scikit-learn>=1.5",
+    "pandas>=2.2",
+    "pyarrow>=17.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "pyyaml>=6.0",
+    "matplotlib>=3.9",
+    "shap>=0.51",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["baby_ml"]
