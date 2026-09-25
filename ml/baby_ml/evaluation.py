@@ -31,10 +31,15 @@ from baby_ml.features import Label, SplitName
 from baby_ml.models import TrainedModel
 
 # One fixed colour per model, so a model looks the same on every chart. These
-# are the first three slots of a CVD-validated categorical palette.
-MODEL_COLORS = {"lightgbm": "#2a78d6", "xgboost": "#eb6834", "random_forest": "#1baf7a"}
+# are the first four slots of a CVD-validated categorical palette.
+MODEL_COLORS = {
+    "lightgbm": "#2a78d6",
+    "xgboost": "#eb6834",
+    "random_forest": "#1baf7a",
+    "jev": "#e87ba4",
+}
 REFERENCE_COLOR = "#8a8984"  # chance / base-rate / perfect lines
-_FALLBACK_COLORS = ("#e87ba4", "#4a3aa7", "#e34948")
+_FALLBACK_COLORS = ("#4a3aa7", "#e34948")
 
 
 class Predictions(BaseModel):

@@ -56,6 +56,30 @@ comparison.recall_at_percentiles()            # share of sleeps caught in the to
 comparison.shap_importance()                  # mean |SHAP| per feature, per model
 ```
 
+## Comparing against Jev
+
+[Jev](https://docs.typesafe.ai/introduction) is a zero-shot model: it isn't
+trained on our data. `baby_ml.jev` turns each row into a plain-English
+description of the baby's state, asks one yes/no question per label, and
+returns the same `Predictions` the trees produce.
+
+Put your key in `ml/.env`, which is gitignored:
+
+```
+TYPESAFE_API_KEY=...
+```
+
+```python
+from baby_ml import Comparison, JevModel
+
+jev_preds = await JevModel().predict(df, "val")   # top-level await in Jupyter
+Comparison.run(df).with_predictions(list(jev_preds.values())).metrics()
+```
+
+Answers are cached per row in `ml/data/jev/`, keyed by the model, the questions
+and the state wording, so reruns are free and an interrupted run resumes. The
+whole `val` split costs about $0.08. See `notebooks/02_jev_comparison.ipynb`.
+
 ## Notebooks
 
 ```bash

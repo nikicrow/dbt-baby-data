@@ -4,6 +4,7 @@
 >>> comparison.metrics()
 >>> comparison.plot_performance()
 >>> comparison.shap_importance()
+>>> comparison.with_predictions(jev_preds)    # add a model trained elsewhere, e.g. Jev
 
 All models share one `FeatureSpec` per label (same features, same split), so
 any difference in the numbers is the model, not the data it saw.
@@ -35,14 +36,19 @@ LABELS: tuple[Label, ...] = ("is_asleep_30_mins", "is_asleep_60_mins")
 
 
 class Comparison(BaseModel):
-    """Fitted models and their predictions, keyed by (label, model kind)."""
+    """Fitted models and their predictions, keyed by (label, model name).
+
+    `models` holds only the trees fitted here, which is what SHAP needs.
+    `predictions` can hold more: anything added with `with_predictions`, such
+    as Jev, joins every metric and curve but has no SHAP.
+    """
 
     model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     df: pd.DataFrame
     split: SplitName
     models: dict[tuple[Label, ModelKind], TrainedModel]
-    predictions: dict[tuple[Label, ModelKind], Predictions]
+    predictions: dict[tuple[Label, str], Predictions]
     shap_rows: int | None = 1000  # rows sampled for SHAP; None explains them all
     # SHAP on the forest is slow, so compute each model's values once.
     _shap: dict[tuple[Label, ModelKind], tuple[np.ndarray, pd.DataFrame]] = PrivateAttr(
@@ -80,11 +86,31 @@ class Comparison(BaseModel):
         return list(dict.fromkeys(label for label, _ in self.models))
 
     @property
-    def kinds(self) -> list[ModelKind]:
-        return list(dict.fromkeys(kind for _, kind in self.models))
+    def names(self) -> list[str]:
+        """Every model with predictions, in the order they were added."""
+        return list(dict.fromkeys(name for _, name in self.predictions))
 
     def predictions_for(self, label: Label) -> list[Predictions]:
-        return [self.predictions[(label, kind)] for kind in self.kinds]
+        return [self.predictions[(label, name)] for name in self.names if (label, name) in self.predictions]
+
+    def with_predictions(self, extra: Sequence[Predictions]) -> "Comparison":
+        """A copy with more models' predictions alongside the trees'.
+
+        They must be on the same split and the same rows, or the metrics
+        wouldn't be comparable, so both are checked.
+        """
+        predictions = dict(self.predictions)
+        for pred in extra:
+            if pred.split != self.split:
+                raise ValueError(f"{pred.name} is scored on {pred.split}, not {self.split}")
+            reference = next(p for (label, _), p in self.predictions.items() if label == pred.label)
+            if not np.array_equal(reference.y_true, pred.y_true):
+                raise ValueError(
+                    f"{pred.name} ({pred.label}) isn't on the same rows as the other models — "
+                    "was it run with `limit`?"
+                )
+            predictions[(pred.label, pred.name)] = pred
+        return self.model_copy(update={"predictions": predictions})
 
     def metrics(self) -> pd.DataFrame:
         return metrics_table(list(self.predictions.values()))
