@@ -5,6 +5,7 @@ from baby_ml.data import latest_snapshot, load_training_set, pull_snapshot
 from baby_ml.evaluation import (
     Metrics,
     Predictions,
+    bootstrap_by_day,
     metrics_table,
     plot_cumulative_recall,
     plot_feature_importance,
@@ -31,6 +32,7 @@ __all__ = [
     "TrainedModel",
     "describe_state",
     "example_states",
+    "bootstrap_by_day",
     "latest_snapshot",
     "load_training_set",
     "metrics_table",

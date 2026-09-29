@@ -10,7 +10,9 @@ What that makes this comparison: 20,000 labelled rows of *these two babies*
 versus zero-shot general knowledge of infant sleep. Jev only sees the val rows
 it's asked about, one at a time.
 
-Two rules from Jev's documented weak spots shape `describe_state`:
+How a row is written down is its own module, `layouts.py`, with four
+layouts to compare. Two rules from Jev's documented weak spots shaped the
+original `narrative` one:
 
 - **Arithmetic stays in code.** Jev is unreliable at maths and at treating
   times as ordered quantities, so ratios, durations and comparisons ("awake for
@@ -39,13 +41,10 @@ from typesafe_sdk import AsyncTypeSafeClient, Noul, RetryPolicy
 from baby_ml.data import SNAPSHOT_DIR
 from baby_ml.evaluation import Predictions
 from baby_ml.features import Label, SplitColumn, SplitName
+from baby_ml.layouts import LAYOUTS, LayoutName, StateLayout
 from baby_ml.settings import ML_DIR
 
 CACHE_DIR = SNAPSHOT_DIR / "jev"
-
-# Bump when describe_state's wording changes, so old cached answers (which
-# were given to different text) aren't reused.
-STATE_VERSION = 1
 
 # USD per million input tokens; output tokens are free. From docs.typesafe.ai/models.
 PRICE_PER_MILLION_INPUT_TOKENS = 0.042
@@ -98,6 +97,11 @@ class JevSpec(BaseModel):
     model: str = "jev-latest"
     labels: tuple[Label, ...] = ("is_asleep_30_mins", "is_asleep_60_mins")
     split_column: SplitColumn = "split_forward_time"
+    layout: LayoutName = "narrative"
+
+    @property
+    def state_layout(self) -> StateLayout:
+        return LAYOUTS[self.layout]
 
     @property
     def questions(self) -> dict[Label, Noul]:
@@ -108,123 +112,11 @@ class JevSpec(BaseModel):
         payload = {
             "model": self.model,
             "questions": {k: q.model_dump() for k, q in self.questions.items()},
-            "state_version": STATE_VERSION,
+            "layout": self.layout,
+            "layout_version": self.state_layout.version,
         }
         digest = hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
         return digest[:12]
-
-
-# --- a row as words -------------------------------------------------------------
-
-
-def describe_state(row: pd.Series) -> dict[str, str]:
-    """The prediction point as short named facts, arithmetic already done."""
-    state = {
-        "baby": f"{row.age_weeks} weeks old ({row.age_months:.1f} months)",
-        "time_now": f"{_clock(row.minutes_since_midnight)} ({_part_of_day(row.hour_of_day)})",
-        "current_wake_window": _current_wake_window(row),
-        "recent_wake_windows": (
-            f"Her last three wake windows averaged {_duration(row.avg_wake_window_last_3)}."
-        ),
-        "today_so_far": _today_so_far(row),
-        "last_night": (
-            f"Slept {_duration(row.last_night_sleep_minutes)} in total, longest stretch "
-            f"{_duration(row.last_night_longest_stretch_minutes)}, "
-            f"woke {_times(row.last_night_waking_count)}."
-        ),
-        "sleep_last_24h": _sleep_last_24h(row),
-        "feeding": _feeding(row),
-    }
-    return state
-
-
-def _current_wake_window(row: pd.Series) -> str:
-    awake = row.minutes_since_last_wake
-    kind = "her night sleep" if row.last_sleep_was_night else "a nap"
-    text = (
-        f"Awake for {_duration(awake)}, since waking from {kind} "
-        f"that lasted {_duration(row.last_sleep_duration_minutes)}."
-    )
-    # wake_window_vs_recent_median = awake / 14-day median wake window. Undo it
-    # here so Jev gets both the typical length and the share, not a ratio.
-    ratio = row.wake_window_vs_recent_median
-    if awake > 0 and ratio and ratio > 0:
-        typical = awake / ratio
-        text += (
-            f" Her typical wake window over the last two weeks is {_duration(typical)}, "
-            f"so she is {ratio:.0%} of the way through a typical wake window."
-        )
-    return text
-
-
-def _today_so_far(row: pd.Series) -> str:
-    up = f"Up for the day for {_duration(row.minutes_since_morning_wake)}"
-    if row.nap_count_today_so_far == 0:
-        return f"{up}; no naps yet today."
-    return (
-        f"{up}; {_count(row.nap_count_today_so_far, 'nap')} so far today totalling "
-        f"{_duration(row.nap_minutes_today_so_far)}."
-    )
-
-
-def _sleep_last_24h(row: pd.Series) -> str:
-    debt = row.sleep_debt_24h_minutes
-    if abs(debt) < 30:
-        versus = "about her usual daily amount"
-    elif debt < 0:
-        versus = f"{_duration(-debt)} less than her usual daily amount"
-    else:
-        versus = f"{_duration(debt)} more than her usual daily amount"
-    return (
-        f"{_duration(row.sleep_minutes_last_24h)} across "
-        f"{_count(row.sleep_count_last_24h, 'sleep')}, {versus}."
-    )
-
-
-def _feeding(row: pd.Series) -> str:
-    kind = "bottle feed" if row.last_feed_type == "BOTTLE" else "breastfeed"
-    text = (
-        f"Last feed started {_duration(row.minutes_since_last_feed_start)} ago "
-        f"(a {_duration(row.last_feed_duration_minutes)} {kind}). "
-        f"{_count(row.feed_count_last_24h, 'feed')} in the last 24 hours"
-    )
-    if pd.notna(row.avg_feed_interval_last_24h):
-        text += f", about every {_duration(row.avg_feed_interval_last_24h)}"
-    text += "."
-    if row.is_cluster_feeding:
-        text += " She is cluster feeding."
-    return text
-
-
-def _duration(minutes: float) -> str:
-    minutes = int(round(minutes))
-    hours, mins = divmod(minutes, 60)
-    if hours == 0:
-        return f"{mins} min"
-    return f"{hours} h" if mins == 0 else f"{hours} h {mins} min"
-
-
-def _clock(minutes_since_midnight: int) -> str:
-    hours, mins = divmod(int(minutes_since_midnight), 60)
-    return f"{hours:02d}:{mins:02d}"
-
-
-def _part_of_day(hour: int) -> str:
-    if 5 <= hour < 12:
-        return "morning"
-    if 12 <= hour < 17:
-        return "afternoon"
-    if 17 <= hour < 21:
-        return "evening"
-    return "night"
-
-
-def _count(n: int, noun: str) -> str:
-    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
-
-
-def _times(n: int) -> str:
-    return {0: "no times", 1: "once", 2: "twice"}.get(int(n), f"{int(n)} times")
 
 
 # --- calling the API -------------------------------------------------------------
@@ -248,7 +140,7 @@ class JevModel(BaseModel):
 
     @property
     def name(self) -> str:
-        return "jev"
+        return f"jev_{self.spec.layout}"
 
     @property
     def cache_path(self) -> Path:
@@ -308,7 +200,7 @@ class JevModel(BaseModel):
             async def ask(row: pd.Series) -> None:
                 async with semaphore:
                     response = await client.system_one(
-                        state=describe_state(row),
+                        state=self.spec.state_layout.describe(row),
                         questions=self.spec.questions,
                         model=self.spec.model,
                     )
@@ -357,8 +249,18 @@ class JevModel(BaseModel):
         )
 
 
-def example_states(df: pd.DataFrame, n: int = 3, split: SplitName = "val") -> list[dict[str, str]]:
-    """A few rendered states, to read exactly what Jev will be shown."""
+def example_states(
+    df: pd.DataFrame, n: int = 3, split: SplitName = "val", layout: LayoutName = "narrative"
+) -> list[dict[str, Any]]:
+    """A few rendered states, to read exactly what Jev will be shown.
+
+    The same rows for every layout, so layouts can be compared side by side.
+    """
     rows = df[df["split_forward_time"] == split].sample(n, random_state=1)
-    return [describe_state(row) for _, row in rows.iterrows()]
+    return [LAYOUTS[layout].describe(row) for _, row in rows.iterrows()]
+
+
+def describe_state(row: pd.Series, layout: LayoutName = "narrative") -> dict[str, Any]:
+    """One row as Jev would see it under `layout`."""
+    return LAYOUTS[layout].describe(row)
 

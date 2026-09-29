@@ -77,8 +77,13 @@ Comparison.run(df).with_predictions(list(jev_preds.values())).metrics()
 ```
 
 Answers are cached per row in `ml/data/jev/`, keyed by the model, the questions
-and the state wording, so reruns are free and an interrupted run resumes. The
-whole `val` split costs about $0.08. See `notebooks/02_jev_comparison.ipynb`.
+and the state wording, so reruns are free and an interrupted run resumes. A full
+`val` run costs about $0.10–0.12 per layout. See `notebooks/02_jev_comparison.ipynb`.
+
+How a row is written for Jev is pluggable: `baby_ml/layouts.py` has four
+`StateLayout`s (`narrative`, `numeric`, `minimal`, `qualitative`), chosen with
+`JevModel(spec=JevSpec(layout="minimal"))`. `notebooks/03_jev_layouts.ipynb`
+compares all four against the trees.
 
 ## Notebooks
 
