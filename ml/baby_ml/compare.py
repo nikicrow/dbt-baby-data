@@ -112,11 +112,15 @@ class Comparison(BaseModel):
             predictions[(pred.label, pred.name)] = pred
         return self.model_copy(update={"predictions": predictions})
 
+    def _by_label(self) -> list[Predictions]:
+        """Every prediction set grouped by label, models in the order they were added."""
+        return [pred for label in self.labels for pred in self.predictions_for(label)]
+
     def metrics(self) -> pd.DataFrame:
-        return metrics_table(list(self.predictions.values()))
+        return metrics_table(self._by_label())
 
     def recall_at_percentiles(self, percentiles: Sequence[float] = (5, 10, 20, 30, 50)) -> pd.DataFrame:
-        return recall_at_percentiles(list(self.predictions.values()), percentiles)
+        return recall_at_percentiles(self._by_label(), percentiles)
 
     def plot_performance(self) -> Figure:
         """One row per label: PR, ROC and cumulative recall, all models overlaid."""
