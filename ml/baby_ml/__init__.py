@@ -5,6 +5,7 @@ from baby_ml.data import latest_snapshot, load_training_set, pull_snapshot
 from baby_ml.evaluation import (
     Metrics,
     Predictions,
+    bootstrap_by_day,
     metrics_table,
     plot_cumulative_recall,
     plot_feature_importance,
@@ -15,6 +16,7 @@ from baby_ml.evaluation import (
     recall_at_percentiles,
 )
 from baby_ml.features import FeatureSpec
+from baby_ml.jev import JevModel, JevSpec, describe_state, example_states
 from baby_ml.models import MODEL_KINDS, TrainedModel, train
 from baby_ml.settings import DatabaseSettings
 
@@ -23,9 +25,14 @@ __all__ = [
     "Comparison",
     "DatabaseSettings",
     "FeatureSpec",
+    "JevModel",
+    "JevSpec",
     "Metrics",
     "Predictions",
     "TrainedModel",
+    "describe_state",
+    "example_states",
+    "bootstrap_by_day",
     "latest_snapshot",
     "load_training_set",
     "metrics_table",
