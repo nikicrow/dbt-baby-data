@@ -1,9 +1,23 @@
-"""How a prediction point is written down for Jev: four layouts to compare.
+"""The `StateLayout`s: the ways a training-set row can be written down for Jev.
 
 Jev reads text, so every row has to become a `state`, a JSON object of named
-facts. *How* it's written is as much a modelling choice as the trees'
-hyperparameters, so each layout here is one hypothesis about what Jev reads
-best:
+facts. This file holds that conversion and nothing else: no API calls, no
+caching (those are in `jev.py`).
+
+- **`StateLayout`** is the abstract base class. A layout has a `name`, a
+  `version`, and one method, `describe(row) -> dict`.
+- **Four concrete layouts** subclass it, one per hypothesis (table below).
+- **`LAYOUTS`** maps each name to an instance. `JevSpec(layout="minimal")`
+  looks its layout up here, so a layout is chosen by name, never constructed.
+
+To try a new layout, subclass `StateLayout`, add its name to `LayoutName`
+and add an instance to `LAYOUTS`. Then read `example_states(df,
+layout=...)` before running it. Bump `version` whenever an existing layout's
+wording changes: it's part of Jev's cache key, and without the bump old
+answers would be reused for new text.
+
+*How* a row is written is as much a modelling choice as the trees'
+hyperparameters, so each layout is one hypothesis about what Jev reads best:
 
 | Layout        | Hypothesis                                                         |
 |---------------|--------------------------------------------------------------------|
@@ -15,8 +29,12 @@ best:
 |               | wake window"): plays to Jev's semantics, avoids its maths.         |
 
 Every layout sees the same row, and none sees the label, the date or the
-baby's name. A layout's `version` is part of Jev's cache key, so bump it
-whenever the wording changes, or old answers will be reused for new text.
+baby's name. Two of Jev's documented weak spots shaped `narrative`, and the
+`val` results bore both out: it's unreliable at arithmetic and at comparing
+times, so ratios and durations are computed here and handed over as words
+(`numeric`, which skips that, was the worst layout); and irrelevant detail
+lowers accuracy, so only the useful facts are sent (`minimal` did no worse
+with half of them).
 """
 
 from abc import ABC, abstractmethod

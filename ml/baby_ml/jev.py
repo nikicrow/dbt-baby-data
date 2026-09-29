@@ -1,29 +1,40 @@
-"""Jev (TypeSafe's System One model) as a drop-in for the tree models.
+"""Ask Jev about a split of the training set and get back `Predictions`.
 
-Jev is not trained on our data. It reads text and answers typed questions, so
-each prediction point becomes a short plain-English description of the baby's
-state (the *state*), and each label becomes a yes/no *Noul* question whose
-answer is a probability. That probability goes into the same `Predictions`
-as the tree models, so every metric and chart applies unchanged.
+This file turns Jev into something the rest of `baby_ml` can treat like any
+other model. The trees are fitted on rows; Jev is sent each row as text (via a
+layout from `layouts.py`) with one yes/no question per label, and its
+probabilities come back as the same `Predictions` the trees produce. So
+`metrics_table`, the curves and `Comparison.with_predictions` all work on it
+unchanged.
 
-What that makes this comparison: 20,000 labelled rows of *these two babies*
-versus zero-shot general knowledge of infant sleep. Jev only sees the val rows
-it's asked about, one at a time.
+The pieces, in the order they're used:
 
-How a row is written down is its own module, `layouts.py`, with four
-layouts to compare. Two rules from Jev's documented weak spots shaped the
-original `narrative` one:
+- **`JevSettings`** reads the API key from `TYPESAFE_API_KEY` in `ml/.env`
+  (gitignored) as a `SecretStr`. You never construct it yourself;
+  `JevModel` does when it opens a client.
+- **`QUESTIONS`** holds the fixed wording of the two yes/no questions, one per
+  label.
+- **`JevSpec`** is *what* to ask: model version, labels, split column and
+  layout. It's a frozen Pydantic model because it's also the cache's identity:
+  `cache_key` hashes everything that could change Jev's answer, so changing
+  any of it starts a fresh cache instead of mixing answers to different
+  questions. It plays the same role as `FeatureSpec` does for the trees.
+- **`JevModel`** is *how* to ask: it holds a spec plus run settings
+  (concurrency, how often to save) that don't affect the answers, and so
+  aren't in the key. `predict` sends only the rows that aren't cached yet,
+  saves as it goes, and returns one `Predictions` per label.
+- **`example_states` / `describe_state`** show exactly what Jev will read,
+  without calling the API. Check these before spending money on a new layout.
 
-- **Arithmetic stays in code.** Jev is unreliable at maths and at treating
-  times as ordered quantities, so ratios, durations and comparisons ("awake for
-  80% of her usual wake window") are computed here and handed over as words.
-- **Send only what the question needs.** Low-signal columns (weekday, tod_sin,
-  nappy counts) are left out; a feature the trees can ignore is noise to Jev.
+Usage, in a notebook (Jupyter allows top-level `await`):
 
-API calls cost money and aren't free to repeat, so answers are cached per row
-in `ml/data/jev/`, keyed by a hash of everything that could change them (model,
-questions, state wording). Rerunning the notebook only calls the API for rows
-it hasn't answered yet, and an interrupted run resumes where it stopped.
+    jev = JevModel(spec=JevSpec(layout="minimal"))
+    preds = await jev.predict(df, "val")          # {label: Predictions}
+    comparison = Comparison.run(df).with_predictions(list(preds.values()))
+    jev.cost()                                    # tokens and USD spent so far
+
+Answers are cached per row in `ml/data/jev/<cache_key>.parquet`, so rerunning
+costs nothing, and a run that dies partway resumes from the last save.
 """
 
 import asyncio
@@ -194,6 +205,12 @@ class JevModel(BaseModel):
 
         print(f"Asking Jev about {len(todo):,} rows ({len(rows) - len(todo):,} cached)")
         new: list[dict[str, Any]] = []
+        # A semaphore is a counter of free slots: `async with semaphore` takes
+        # a slot, or waits until one is free, and gives it back on exit. All
+        # the chunk's requests are started at once by gather() below, but only
+        # `concurrency` (16) can be inside the `async with` block, waiting on
+        # the API, at any moment; the rest queue. Without it, gather would
+        # fire 200 requests at the same instant and hit the rate limit.
         semaphore = asyncio.Semaphore(self.concurrency)
         async with self._client() as client:
 
