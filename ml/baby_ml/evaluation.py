@@ -47,6 +47,8 @@ MODEL_COLORS = {
     # XGBoost refit on train + val: the same model, so the same colour. Never
     # plot it on the same axes as plain "xgboost".
     "xgboost_train_val": "#eb6834",
+    # Kumo Tabular (baby_ml.kumo), any size or context: the next palette slot.
+    "kumo": "#e34948",
 }
 REFERENCE_COLOR = "#8a8984"  # chance / base-rate / perfect lines
 _FALLBACK_COLORS = ("#e34948",)
@@ -310,13 +312,20 @@ def mean_abs_shap(values: np.ndarray, columns: Sequence[str]) -> pd.Series:
 
 
 def _color(name: str, i: int) -> str:
+    if name.startswith("kumo"):
+        return MODEL_COLORS["kumo"]
     return MODEL_COLORS.get(name, _FALLBACK_COLORS[i % len(_FALLBACK_COLORS)])
 
 
 def _linestyle(name: str) -> object:
-    """Trees solid, Jev dashed: model family readable without colour. A long
-    dash, so it doesn't look like the short-dashed reference lines."""
-    return (0, (6, 2)) if name.startswith("jev") else "-"
+    """Trees solid, Jev dashed, Kumo dash-dot: model family readable without
+    colour. Long dashes, so they don't look like the short-dashed reference
+    lines."""
+    if name.startswith("jev"):
+        return (0, (6, 2))
+    if name.startswith("kumo"):
+        return (0, (6, 2, 1, 2))
+    return "-"
 
 
 def _style(ax: Axes, title: str, xlabel: str, ylabel: str, legend_loc: str = "best") -> None:

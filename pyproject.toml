@@ -21,6 +21,13 @@ ml = [
     "jupyterlab>=4.2",
     "ipykernel>=6.29",
 ]
+# NVIDIA's Kumo Tabular foundation model (baby_ml.kumo). Opt-in on top of ml
+# because torch is large: `uv sync --group ml --group kumo`. The library isn't
+# on PyPI yet (only a placeholder), so it's pinned to a commit on GitHub.
+kumo = [
+    "torch>=2.7",
+    "structured-data-models @ git+https://github.com/NVIDIA/structured-data-models.git@5d663369ff8ead4a78c910dbb8483d558e46627b",
+]
 
 [tool.uv.workspace]
 members = ["ml"]

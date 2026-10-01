@@ -85,6 +85,42 @@ How a row is written for Jev is pluggable: `baby_ml/layouts.py` has four
 `JevModel(spec=JevSpec(layout="minimal"))`. `notebooks/03_jev_layouts.ipynb`
 compares all four against the trees.
 
+## Comparing against Kumo Tabular
+
+[Kumo Tabular](https://huggingface.co/nvidia/Kumo-Tabular) is NVIDIA's tabular
+foundation model. It learns in context: it's handed the labelled `train` rows
+together with the rows to score, and predicts them in one forward pass, with
+no training. It runs locally and sees the same feature columns as the trees.
+It needs torch, so it's a separate opt-in group:
+
+```bash
+uv sync --group ml --group kumo
+```
+
+```python
+from baby_ml.kumo import KumoModel, KumoSpec
+
+kumo = KumoModel(spec=KumoSpec(size="small"))           # context = train
+preds = kumo.predict(df, "val")                          # {label: Predictions}
+Comparison.run(df).with_predictions(list(preds.values())).metrics()
+
+KumoModel(spec=KumoSpec(context_splits=("train", "val"))).predict(df, "test")
+```
+
+The weights download from Hugging Face on first use (110 MB for `small`). On a
+laptop CPU one ensemble member takes about 5 minutes per label and peaks at
+about 4 GB of RAM, so fill the cache from the command line before opening the
+notebook. Each label runs in its own process:
+
+```bash
+uv run python -m baby_ml.kumo val
+uv run python -m baby_ml.kumo test
+uv run python -m baby_ml.kumo test --context train val
+```
+
+Predictions are cached in `ml/data/kumo/`, keyed by spec, snapshot, label and
+split. See `notebooks/05_kumo_comparison.ipynb`.
+
 ## Notebooks
 
 ```bash
