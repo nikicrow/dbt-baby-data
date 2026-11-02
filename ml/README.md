@@ -121,7 +121,71 @@ uv run python -m baby_ml.kumo test --context train val
 Predictions are cached in `ml/data/kumo/`, keyed by spec, snapshot, label and
 split. See `notebooks/05_kumo_comparison.ipynb`.
 
+## Training with 19th
+
+The [19th Training API](https://19th.com/docs/training) workflow trains two
+`event_probability` models, one for sleep **onset** within 30 minutes and one
+within 60 minutes. These are probabilities for a baby who is currently awake.
+Both use existing observed labels; no automatic labeling is requested.
+
+Add `TRAINING_API_KEY=...` to `ml/.env` (gitignored). The Training key needs
+`training:write`, `training:read`, and `inference:invoke` for evaluation.
+
+From the repository root:
+
+```bash
+uv run --group ml python -m baby_ml.nineteenth prepare
+uv run --group ml python -m baby_ml.nineteenth fit
+# Repeat fit to read progress; it resumes the same runs.
+uv run --group ml python -m baby_ml.nineteenth fit
+uv run --group ml python -m baby_ml.nineteenth evaluate
+# Reserve test evaluation until model choices are fixed:
+uv run --group ml python -m baby_ml.nineteenth evaluate --split test
+```
+
+`prepare` is local only. It freezes the latest local parquet snapshot and saves
+CSVs, exact requests, checksums and idempotency keys under
+`ml/data/19th/sleep-v1/`. Use `--snapshot PATH` to pin another snapshot and
+`--output PATH` for a new experiment; existing directories are never overwritten.
+Use `--mode high` or `--mode ultra` on prepare for more training effort; the
+default is `standard`, with the `fast` model variant. Training and inference
+may incur service charges. `fit` uploads training features and one label to 19th.
+Names, IDs, dates, other labels and future-derived sleep times are excluded.
+Evaluation sends only the holdout feature inputs.
+
+The chronological splits are per baby. Training labels within 60 minutes of
+validation, and validation labels within 60 minutes of test, are purged.
+Held-out predictions are cached in batches; metrics report PR-AUC, ROC-AUC
+and Brier score alongside base rates, using the existing evaluation interface.
+The consistency report counts cases where independent models produce P(30) >
+P(60); probabilities are not silently adjusted. Select any yes/no threshold on
+validation, based on the desired false-alarm rate, before evaluating test.
+
+Keep the complete run folder to resume after interruption. On a lost submission
+response, rerun `fit` with the same folder within seven days (the API's
+idempotency lifetime). After seven days, recover the run ID from 19th rather
+than replaying a submission with no saved response. HTTP failures stop the
+command; respect any Retry-After before retrying. Model IDs, download readiness,
+and hosted prediction URLs are saved in each `fit.json`. Download and inference
+readiness are separate. This workflow uses hosted inference; it does not install
+the local model runtime or change the app's live predictions.
+
+The current sampling excludes long tracking gaps and requires a later recorded
+sleep. Offline metrics therefore describe this observed cohort; validate on
+fresh live data before using them as a general measure of app performance.
+
 ## Notebooks
+
+`notebooks/06_19th_comparison.ipynb` compares the trained 19th models with
+all three trees, four cached Jev layouts and cached Kumo small. It includes
+ranking curves, calibration, paired bootstrap intervals by baby-day,
+subgroup results, threshold tradeoffs and horizon consistency. Run All makes
+no API calls and does not run Kumo inference; it refits the tree baselines
+locally. Missing or mismatched prediction caches fail explicitly. The pinned
+snapshot and saved 19th run under `ml/data/19th/sleep-v1/` are required.
+Executed outputs are included; PNG charts and CSV tables are also exported to
+that run's `analysis/` directory. The notebook explains cloud training versus
+local inference, and separates documented 19th behavior from unknown internals.
 
 ```bash
 uv run --group ml jupyter lab ml/notebooks
