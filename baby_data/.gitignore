@@ -4,3 +4,5 @@ dbt_packages/
 logs/
 transformed_data/
 scripts/.env
+/profiles.yml
+/.local-postgres/

@@ -53,6 +53,8 @@ models:
 
 seeds:
   baby_data:
+    # The local ingestion pipeline loads these exports into the app source tables.
+    +enabled: "{{ target.name != 'dev' }}"
     # Columns quoted because the CSVs use mixed-case headers
     +quote_columns: true
     # All seed files are raw exports — load as-is without type casting
