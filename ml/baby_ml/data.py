@@ -31,8 +31,10 @@ order by baby_name, prediction_time
 CATEGORICAL_COLUMNS = ("baby_name", "last_feed_type", "last_feed_breast_side")
 
 
-def pull_snapshot(settings: DatabaseSettings | None = None) -> Path:
-    """Query the database and write a new timestamped snapshot. Needs the tunnel."""
+def pull_snapshot(
+    settings: DatabaseSettings | None = None, *, directory: Path = SNAPSHOT_DIR
+) -> Path:
+    """Query the configured database and write a new timestamped snapshot."""
     settings = settings or DatabaseSettings()
     engine = create_engine(settings.url, connect_args={"connect_timeout": 10})
     try:
@@ -44,8 +46,8 @@ def pull_snapshot(settings: DatabaseSettings | None = None) -> Path:
         engine.dispose()
 
     df = _coerce_dtypes(df)
-    SNAPSHOT_DIR.mkdir(exist_ok=True)
-    path = SNAPSHOT_DIR / f"{SNAPSHOT_PREFIX}{datetime.now():%Y%m%dT%H%M%S}.parquet"
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / f"{SNAPSHOT_PREFIX}{datetime.now():%Y%m%dT%H%M%S%f}.parquet"
     df.to_parquet(path, index=False)
     return path
 

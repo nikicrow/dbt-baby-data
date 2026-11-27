@@ -15,7 +15,6 @@ from collections.abc import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import shap
 from matplotlib.axes import Axes
 from matplotlib.figure import Figure
 from pydantic import BaseModel, ConfigDict
@@ -49,6 +48,7 @@ MODEL_COLORS = {
     "xgboost_train_val": "#eb6834",
     # Kumo Tabular (baby_ml.kumo), any size or context: the next palette slot.
     "kumo": "#e34948",
+    "tabicl": "#76528b",
 }
 REFERENCE_COLOR = "#8a8984"  # chance / base-rate / perfect lines
 _FALLBACK_COLORS = ("#e34948",)
@@ -296,6 +296,8 @@ def plot_shap_beeswarm(
     values: np.ndarray, X_shown: pd.DataFrame, title: str, max_display: int = 20
 ) -> Figure:
     """The beeswarm for already-computed SHAP values (see `TrainedModel.shap_values`)."""
+    import shap
+
     # summary_plot draws into the current figure, so give it a fresh one.
     plt.figure()
     shap.summary_plot(values, X_shown, max_display=max_display, show=False)
@@ -312,6 +314,8 @@ def mean_abs_shap(values: np.ndarray, columns: Sequence[str]) -> pd.Series:
 
 
 def _color(name: str, i: int) -> str:
+    if name.startswith("tabicl"):
+        return MODEL_COLORS["tabicl"]
     if name.startswith("kumo"):
         return MODEL_COLORS["kumo"]
     return MODEL_COLORS.get(name, _FALLBACK_COLORS[i % len(_FALLBACK_COLORS)])

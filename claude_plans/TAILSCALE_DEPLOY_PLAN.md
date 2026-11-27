@@ -1,5 +1,9 @@
 # Deploying the Baby App on Tailscale, on Local Postgres
 
+> **Host update (2026-11-24).** Start current database connection checks with
+> `crows-nest` (Omarchy). The `fedora-1` references below document the previous
+> deployment. See the [current connection guide](../README.md#connecting-to-the-database-on-crows-nest).
+
 ## Status — 2026-08-27
 
 | Phase | State | Landed in |

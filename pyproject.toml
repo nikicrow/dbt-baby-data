@@ -29,6 +29,9 @@ kumo = [
     "structured-data-models @ git+https://github.com/NVIDIA/structured-data-models.git@5d663369ff8ead4a78c910dbb8483d558e46627b",
 ]
 
+# Local TabICL classifier; kept optional alongside Kumo.
+tabicl = ["tabicl==2.1.1", "huggingface-hub>=0.26"]
+
 [tool.uv.workspace]
 members = ["ml"]
 

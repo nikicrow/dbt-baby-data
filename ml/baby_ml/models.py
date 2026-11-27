@@ -11,11 +11,8 @@ forest needs numbers, so `prepare` swaps each category for its integer code
 import warnings
 from typing import Any, Literal
 
-import lightgbm as lgb
 import numpy as np
 import pandas as pd
-import shap
-import xgboost as xgb
 from pydantic import BaseModel, ConfigDict
 from sklearn.ensemble import RandomForestClassifier
 
@@ -101,6 +98,8 @@ class TrainedModel(BaseModel):
         boosters would cope with the lot. The returned frame is the prepared
         (numeric) one, which is what SHAP's plots need to colour by value.
         """
+        import shap
+
         if max_rows is not None and len(X) > max_rows:
             X = X.sample(max_rows, random_state=seed)
         X = self.prepare(X)
@@ -142,8 +141,12 @@ def train(
 
 def _estimator(kind: ModelKind, params: dict[str, Any]) -> Any:
     if kind == "lightgbm":
+        import lightgbm as lgb
+
         return lgb.LGBMClassifier(**params)
     if kind == "xgboost":
+        import xgboost as xgb
+
         return xgb.XGBClassifier(**params)
     return RandomForestClassifier(**params)
 

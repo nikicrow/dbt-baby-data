@@ -15,10 +15,10 @@ runs, leaves it all out.
 
 ## Getting data
 
-Open the tunnel first, since the database is on fedora-1:
+Set up the SSH alias in the [database connection guide](../README.md#connecting-to-the-database-on-crows-nest), then open the tunnel:
 
 ```bash
-ssh -N fedora-1-db
+ssh -N crows-nest-db
 ```
 
 Credentials come from the `fedora_readonly` target in `~/.dbt/profiles.yml`,
@@ -128,3 +128,42 @@ uv run --group ml jupyter lab ml/notebooks
 ```
 
 In VS Code, pick the repo's `.venv` as the kernel.
+
+## Comparing against TabICL
+
+[TabICL](https://huggingface.co/jingang/TabICL) runs locally with labelled
+context, using the same features and sleep-onset outcomes (within 30 and 60
+minutes) as the existing models. The v2 classifier checkpoint and Hub commit
+are pinned in `baby_ml/tabicl.py`; weights and predictions stay in gitignored
+`ml/data/tabicl/`. Install the optional group and download the model:
+
+```bash
+uv sync --group ml --group tabicl
+uv run --group ml --group tabicl python -m baby_ml.tabicl download
+uv run --group ml --group tabicl python -m baby_ml.tabicl val
+uv run --group ml --group tabicl python -m baby_ml.tabicl test
+uv run --group ml --group tabicl python -m baby_ml.tabicl test --context train val
+```
+
+On macOS, LightGBM also needs `brew install libomp` if OpenMP is missing.
+
+Use `--snapshot PATH` to select a frozen parquet, `--label is_asleep_30_mins`
+to run one horizon, and `--estimators 1 --device cpu` for the laptop defaults.
+The first snapshot needs the database tunnel described above. Full-context
+CPU inference may be slow; predictions are cached by actual data and settings.
+
+On the Mac Studio, open `notebooks/06_tabicl_comparison.ipynb` in VS Code
+and select the repo's `.venv/bin/python` kernel. Run the setup cell, then
+**Load dev data**.
+
+The notebook reads the local dbt `dev` target in `baby_data/profiles.yml` and
+freezes the training set under `ml/data/dev/`. Run all cells to score TabICL
+alongside the tree models and a training-prevalence baseline on validation.
+TabICL uses labelled training examples with frozen pretrained weights. On a
+cache miss, the notebook runs inference in a separate process so the kernel
+can run the tree models without loading PyTorch. Restart the kernel if an
+earlier session already imported PyTorch. Optional cells run exploratory test
+comparisons.
+
+To run the CLI against that same dev data, pass its printed snapshot path
+with `--snapshot`. The CLI's default source follows the tunnel setup above.
