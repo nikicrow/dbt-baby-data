@@ -26,6 +26,7 @@ from pydantic_settings import (
     PydanticBaseSettingsSource,
     SettingsConfigDict,
 )
+from sqlalchemy.engine import URL
 
 ML_DIR = Path(__file__).resolve().parents[1]
 DBT_PROFILES = Path.home() / ".dbt" / "profiles.yml"
@@ -96,6 +97,21 @@ class DatabaseSettings(BaseSettings):
     )
 
     @classmethod
+    def local_dev(cls) -> "DatabaseSettings":
+        """Read the repository's gitignored dbt dev profile."""
+        path = ML_DIR.parent / "baby_data" / "profiles.yml"
+        values = DbtProfileSource._read(path, DBT_PROFILE, "dev")
+        required = {"host", "port", "name", "user"}
+        if any(not values.get(key) for key in required) or values.get("type") != "postgres":
+            raise ValueError(f"Expected a complete PostgreSQL {DBT_PROFILE}/dev target in {path}")
+        if not str(values["host"]).startswith("/"):
+            raise ValueError(f"Expected a local PostgreSQL Unix socket in {path}")
+        return cls.model_validate({
+            **{key: values[key] for key in required},
+            "password": values.get("password") or "",
+        })
+
+    @classmethod
     def settings_customise_sources(
         cls,
         settings_cls: type[BaseSettings],
@@ -117,4 +133,12 @@ class DatabaseSettings(BaseSettings):
         containing @ : / ? # can't corrupt it."""
         user = quote(self.user, safe="")
         password = quote(self.password.get_secret_value(), safe="")
+        if self.host.startswith("/"):
+            return URL.create(
+                "postgresql+psycopg2",
+                username=self.user,
+                password=self.password.get_secret_value(),
+                database=self.name,
+                query={"host": self.host, "port": str(self.port)},
+            ).render_as_string(hide_password=False)
         return f"postgresql+psycopg2://{user}:{password}@{self.host}:{self.port}/{self.name}"

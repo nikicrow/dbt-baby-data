@@ -90,15 +90,15 @@ rewritten `seeds/`.
 
 ## Running dbt
 
-Data gets into Postgres via `scripts/ingest.py` / `load_to_database.py`
-(above), not `dbt seed` — the `seeds/` CSVs are transformed and loaded
-directly into the `raw_*` tables that `models/raw` reads as sources.
+On the Mac Studio, run dbt from `baby_data/`. The machine-local
+`profiles.yml` defaults to `dev` and connects to PostgreSQL through a
+private Unix socket in `baby_data/.local-postgres/socket`. The ingestion
+pipeline populates the app source tables, and dbt builds its models from them.
 
 ```bash
 cd baby_data
-uv run dbt deps          # install dbt-labs/codegen
-uv run dbt run
-uv run dbt test
+uv run dbt deps
+uv run dbt build
 ```
 
 The source database and schema default to `baby_data` / `public` — where
@@ -106,77 +106,44 @@ The source database and schema default to `baby_data` / `public` — where
 tables. `DBT_SOURCE_DATABASE` and `DBT_SOURCE_SCHEMA` override them if you need
 to point at a scratch copy.
 
-## Connecting to the database on fedora-1
+## Connecting to the database on crows-nest
 
-The authoritative database lives on `fedora-1`, the home server on the tailnet.
-It is **not** Postgres on that host — there is no `psql` there — but a rootless
-podman container, `baby-data-postgres` (`postgres:17-alpine`), publishing
-`127.0.0.1:5433`. Because it binds to loopback, nothing on the tailnet can
-reach port 5432 or 5433 directly; you tunnel over SSH.
+Start with `crows-nest`, the Omarchy home server on the family tailnet. The
+older deployment notes describe `fedora-1`. The SSH account, database listener
+and roles below come from that deployment and still need verification on Omarchy.
+Check reachability and the SSH listener first:
 
 ```bash
-ssh -N fedora-1-db      # leave running; Ctrl+C closes it
+tailscale ping crows-nest
+nc -vz crows-nest 22
 ```
 
-That alias comes from `~/.ssh/config` and forwards laptop port 5433 to the
-container:
+The previous setup published PostgreSQL on the server's `127.0.0.1:5433`.
+After confirming the SSH user and PostgreSQL listener on Omarchy, use this
+example in `~/.ssh/config`, adjusting the account, key path and remote port as needed:
 
 ```
-Host fedora-1-db
-    HostName fedora-1
+Host crows-nest-db
+    HostName crows-nest
     User crowclaws
     IdentityFile ~/.ssh/id_ed25519
-    LocalForward 5433 127.0.0.1:5433
+    LocalForward 127.0.0.1:5433 127.0.0.1:5433
     ServerAliveInterval 60
     ExitOnForwardFailure yes
 ```
 
-With the tunnel open, the database is `localhost:5433`, database `baby_data`.
-Two roles: `readonly` (SELECT on `public`, `marts` and `ml` — use this for
-pgAdmin, VS Code and ad-hoc SQL) and `postgres` (superuser, for dbt builds).
-Passwords are not in this repo: the superuser's is `POSTGRES_PASSWORD` in
-`podman inspect baby-data-postgres`, and both are in the `FEDORA_DB_PASSWORD`
-and `FEDORA_DB_RO_PASSWORD` env vars on the laptop.
-
-`~/.dbt/profiles.yml` has a target for each, plus the laptop's stale copy. It
-deliberately declares **no default target**, so dbt fails asking for `-t`
-rather than rebuilding something you didn't mean:
-
 ```bash
-uv run dbt build --exclude resource_type:seed -t fedora_via_tunnel   # writes the real tables
-uv run dbt show --inline "select * from ml.ml_sleep_training_set" --limit 20 -t fedora_readonly
+ssh -N crows-nest-db      # leave running; Ctrl+C closes it
 ```
 
-Note `dbt show` appends its own `limit`, so pass `--limit N` rather than
-writing `limit N` into the query — the two collide into a syntax error.
+With the tunnel open, use the `readonly` role on `127.0.0.1:5433`, database
+`baby_data`, for ad hoc queries. Use the ingestion pipeline for production
+writes and the Mac Studio's `dev` target for development builds. CI builds
+into a separate, disposable PostgreSQL instance.
 
-> **Merging a PR does not build anything on `fedora-1`.** CI builds into a
-> throwaway container (below), so new models exist in `main` and nowhere else
-> until someone runs dbt against the server deliberately. After a build that
-> creates a new schema, grant it to the read-only role — grants do not apply to
-> schemas that did not exist when they were made:
->
-> ```sql
-> GRANT USAGE ON SCHEMA <new> TO readonly;
-> GRANT SELECT ON ALL TABLES IN SCHEMA <new> TO readonly;
-> ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA <new> GRANT SELECT ON TABLES TO readonly;
-> ```
-
-Seeds are excluded from builds against the server on purpose. Rows carry a
-`source` column, and `source='app'` rows exist only in that Postgres — they
-cannot be reproduced from the CSVs. Move the database with
-`pg_dump`/`pg_restore`, never by re-running the ingest.
-
-To run SQL on the box itself, without the tunnel:
-
-```bash
-ssh crowclaws@fedora-1 "podman exec baby-data-postgres psql -U postgres -d baby_data -c '<sql>'"
-```
-
-That box also runs unrelated `buzz-prod_*` and `garmin-notes-*` stacks, each
-with its own Postgres container — check the container name before connecting.
-Its login shell prints a harmless error about a missing `openclaw.bash`; it is
-not a failure.
+The Fedora deployment used a Podman container named `baby-data-postgres`.
+Confirm the runtime and container or service name on Omarchy before running SQL
+on the server itself.
 
 ## CI
 
